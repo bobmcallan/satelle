@@ -45,7 +45,7 @@ func newPullOnlyRig(t *testing.T) *pullOnlyRig {
 	t.Cleanup(ts.Close)
 	r.url = ts.URL
 	seedCred(t, ts.URL)
-	r.repo = syncConfigRepo(t, "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"+boundProjectToml)
+	r.repo = syncConfigRepo(t, "[sync]\n"+boundProjectToml)
 	writeRepoFile(t, r.repo, ".satelle/skills/my-skill.md", "---\ntype: skill\n---\nbody\n")
 	writeRepoFile(t, r.repo, ".satelle/documents/local-doc.md", "# local\n")
 	pointAt(t, r.repo)
@@ -224,7 +224,7 @@ func TestPullOnlyBindDoesNotSeed(t *testing.T) {
 func TestPullOnlyNotTakenFromRepoConfig(t *testing.T) {
 	ts, f := newSnapServer(t)
 	seedCred(t, ts.URL)
-	const toml = "[sync]\nskills = \"personal\"\nsettings = \"personal\"\npull_only = true\n" + boundProjectToml
+	const toml = "[sync]\npull_only = true\n" + boundProjectToml
 	newMachine := func() *snapMachine {
 		return &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, toml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
 	}
@@ -232,7 +232,7 @@ func TestPullOnlyNotTakenFromRepoConfig(t *testing.T) {
 	a.write("skills/x.md", "x\n")
 	a.pushConfig()
 
-	b := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, "[sync]\nskills = \"personal\"\n"+boundProjectToml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
+	b := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, "[sync]\n"+boundProjectToml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
 	// A pinned deploy writes the hosted satelle.toml over this checkout's own.
 	b.use()
 	cmd, buf := testCmd()
@@ -280,7 +280,7 @@ func TestPullOnlyOffRestoresPush(t *testing.T) {
 
 // The setter writes only satelle.local.toml.
 func TestProjectPullOnlyWritesLocalFileOnly(t *testing.T) {
-	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
 	pointAt(t, repo)
 	committed := readRepoFile(t, repo, ".satelle/satelle.toml")
 	for _, c := range []struct{ mode, want, line string }{

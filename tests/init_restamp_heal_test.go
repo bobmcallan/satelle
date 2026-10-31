@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 )
@@ -25,13 +26,14 @@ func TestInitSingleRunNoStaleStampWarning(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	data := filepath.Join(repo, ".satelle")
-	// Non-local work state, so doctor reads the recorded push outcome.
+	// A bound repo whose last sync resolved personal, so doctor reads the
+	// recorded push outcome.
 	tomlPath := filepath.Join(data, "satelle.toml")
 	raw, err := os.ReadFile(tomlPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonLocal := strings.Replace(string(raw), "[sync]\n", "[sync]\nstories = \"personal\"\n", 1)
+	nonLocal := strings.Replace(string(raw), "[sync]\n", "[sync]\nproject = \"p\"\n", 1)
 	if nonLocal == string(raw) {
 		t.Fatal("fixture: scaffold [sync] table not found")
 	}
@@ -46,6 +48,9 @@ func TestInitSingleRunNoStaleStampWarning(t *testing.T) {
 		t.Fatalf("guard: a stamp of 0.0.1 must refuse across an init-heals breaking release: err=%v\n%s", err, refusal)
 	}
 	reason := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(refusal), "Error:"))
+	if err := syncstate.RecordResolvedScope(isolatedHome(t), repo, config.PersonalScope, "p", time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	if err := syncstate.RecordPush(isolatedHome(t), repo, false, reason, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}

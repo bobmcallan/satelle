@@ -108,11 +108,15 @@ func TestInitClearsTheRecordedStampRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonLocal := strings.Replace(string(raw), "[sync]\nstale_after = \"24h\"\n", "[sync]\nstale_after = \"24h\"\nstories = \"personal\"\n", 1)
+	nonLocal := strings.Replace(string(raw), "[sync]\nstale_after = \"24h\"\n", "[sync]\nstale_after = \"24h\"\nproject = \"p\"\n", 1)
 	if nonLocal == string(raw) {
 		t.Fatal("fixture: scaffold [sync] block not found")
 	}
 	if err := os.WriteFile(tomlPath, []byte(nonLocal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The last sync resolved personal for the binding, so doctor judges the push.
+	if err := syncstate.RecordResolvedScope(config.GlobalDir(), repo, config.PersonalScope, "p", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dataDir, deployedVersionName), []byte("satelle.version: 0.0.100\n"), 0o644); err != nil {

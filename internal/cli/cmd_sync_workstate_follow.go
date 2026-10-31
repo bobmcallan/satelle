@@ -53,15 +53,10 @@ func runSyncWorkstateFollow(cmd *cobra.Command, serverArg string) error {
 		fmt.Fprintln(out, "workstate follow: not signed in — run \"satelle login\"; the local store is kept whole")
 		return nil
 	}
-	optIn, err := workstateOptIn(a.Config)
-	if err != nil {
+	server := resolveServer(serverArg)
+	if scope, err := syncScopeGate(cmd, a.Config, a.RepoRoot, server, "workstate follow: nothing to follow"); err != nil || scope == config.LocalScope {
 		return err
 	}
-	if !optIn["ledger"] {
-		fmt.Fprintln(out, "workstate follow: the ledger area is local, nothing to follow")
-		return nil
-	}
-	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}

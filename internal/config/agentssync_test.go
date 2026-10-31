@@ -17,8 +17,7 @@ func TestAgentsFilePushedExactlyOnce(t *testing.T) {
 	writeFile(t, repo, ".satelle/workflows/agents.toml", "[executor]\ncommand = \"in-loop\"\n")
 	writeFile(t, repo, ".satelle/workflows/done.md", "---\nname: done\ntype: workflow\nscope: project\n---\n\n## *\n- raised\n")
 
-	cfg := Config{Sync: map[string]string{"workflows": "shared", "agents": "personal"}}
-	b, err := ConfigFiles(cfg, repo, Ignore{})
+	b, err := ConfigFiles(Config{}, TeamScope, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +44,7 @@ func TestLegacyPathRepoPushesUnderCanonicalKey(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, ".satelle/agents.toml", "[executor]\ncommand = \"in-loop\"\n")
 
-	cfg := Config{Sync: map[string]string{"agents": "personal"}}
-	b, err := ConfigFiles(cfg, repo, Ignore{})
+	b, err := ConfigFiles(Config{}, PersonalScope, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +73,7 @@ func TestConfigAreaLocationFollowsFallback(t *testing.T) {
 }
 
 // TestConfigFilesNeverIncludesMachineCatalog pins AC3 of sty_940938e3: even
-// with blanket personal sync, the push set is built only from the repo tree —
+// with a personal scope, the push set is built only from the repo tree —
 // the machine catalog (~/.satelle/agents.toml) is structurally unreachable.
 func TestConfigFilesNeverIncludesMachineCatalog(t *testing.T) {
 	repo := t.TempDir()
@@ -83,8 +81,7 @@ func TestConfigFilesNeverIncludesMachineCatalog(t *testing.T) {
 	writeFile(t, repo, ".satelle/satelle.toml", "")
 	// A machine catalog path must never appear even if the home has one — ConfigFiles
 	// walks repoRoot only.
-	cfg := Config{Sync: map[string]string{"all": "personal"}}
-	b, err := ConfigFiles(cfg, repo, Ignore{})
+	b, err := ConfigFiles(Config{}, PersonalScope, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,9 +101,8 @@ func TestConfigFilesNeverIncludesMachineCatalog(t *testing.T) {
 			t.Errorf("bundle path escapes repo: %q", f.Path)
 		}
 	}
-	// Repo agents still ships under its workflows-relative key when agents/workflows sync.
-	cfg2 := Config{Sync: map[string]string{"agents": "personal", "workflows": "personal"}}
-	b2, err := ConfigFiles(cfg2, repo, Ignore{})
+	// Repo agents still ships under its workflows-relative key under a personal scope.
+	b2, err := ConfigFiles(Config{}, PersonalScope, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -260,10 +260,10 @@ func TestProjectTierScriptsAndHooks(t *testing.T) {
 // AC5/AC6: the project push carries the team-glob files no config area holds,
 // labelled as the team area, and never an init-owned file.
 func TestConfigFilesCarriesTeamFilesOutsideConfigAreas(t *testing.T) {
-	f := newTierFixture(t, "[sync]\nall = \"personal\"\n[team]\npaths = [\"agents.toml\", \"skills/**\", \"scripts/*.sh\", \"hooks/*\"]\n"+tierBoundToml, map[string]string{
+	f := newTierFixture(t, "[team]\npaths = [\"agents.toml\", \"skills/**\", \"scripts/*.sh\", \"hooks/*\"]\n"+tierBoundToml, map[string]string{
 		"scripts/reviewer-token.sh": "#!/bin/sh\n", "hooks/pr-review-post.sh": "#!/bin/sh\n", "hooks/satelle-hook.sh": "#!/bin/sh\n", "scripts/notes.txt": "x\n",
 	})
-	b, err := ConfigFiles(f.cfg, f.root, Ignore{})
+	b, err := ConfigFiles(f.cfg, PersonalScope, f.root, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}

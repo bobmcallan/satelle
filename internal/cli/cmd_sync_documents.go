@@ -26,8 +26,8 @@ func newSyncDocumentsCmd() *cobra.Command {
 		Short: "Push/pull documents for this repo's bound hosted project (local default: no hosted write)",
 		Long: `Move authored documents between this repo and its bound hosted project.
 
-Nothing leaves the machine unless the documents area is opted in, so the default
-is a deliberate no-op. Documents are authored markdown: a pull writes files you
+Nothing leaves the machine under a local scope (unbound, signed out, or not a
+member of the project's team), so the default is a deliberate no-op. Documents are authored markdown: a pull writes files you
 own, so treat it as an incoming edit, not a refresh.`,
 	}
 
@@ -36,8 +36,8 @@ own, so treat it as an incoming edit, not a refresh.`,
 	push := &cobra.Command{
 		Use:   "push",
 		Short: "Upload authored documents to the workspace store (a new version per file)",
-		Long: `push walks the documents area per its resolved [sync] scope — skipping local —
-and uploads each file as a new version into this repo's bound hosted PROJECT
+		Long: `push walks the documents area under the resolved scope — nothing when it is
+local — and uploads each file as a new version into this repo's bound hosted PROJECT
 only (epic:sync-publish), shared with every member of the project's workspace.
 Identical content is idempotent.
 Files with a .local segment are never uploaded (reported as withheld).
@@ -49,7 +49,7 @@ catalog. Requires "satelle project bind <slug>".`,
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
-	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
+	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed; only the scope is asked of the account.")
 	push.Flags().Bool("prune", false, pruneFlagUsage)
 	push.Flags().Bool("force", false, forceFlagUsage)
 	push.Flags().Bool("snapshot-only", false, snapshotOnlyFlagUsage)
@@ -94,17 +94,21 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if err != nil {
 		return err
 	}
-	bundle, scope, err := config.DocumentFiles(cfg, repoRoot, ign)
+	res, err := resolveSyncScope(cmd, cfg, repoRoot, server)
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	if res.Scope == config.LocalScope {
+		fmt.Fprintln(out, "documents push: skipping — "+res.Line())
+		return nil
+	}
+	bundle, err := config.DocumentFiles(cfg, res.Scope, repoRoot, ign)
 	if err != nil {
 		return err
 	}
 	files := bundle.Files
-	out := cmd.OutOrStdout()
 	printWithheldLocal := func() { printBundleExclusions(out, bundle) }
-	if scope == config.LocalScope {
-		fmt.Fprintln(out, "documents scope is local — skipping. Set [sync] documents = personal to opt in.")
-		return nil
-	}
 	if len(files) == 0 {
 		if n := bundle.ExcludedCount(); n > 0 {
 			printWithheldLocal()
@@ -114,7 +118,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		fmt.Fprintln(out, "No documents to push — documents area is empty.")
 		return nil
 	}
-	if note := sharedSyncNote(files); note != "" {
+	if note := sharedSyncNote(res.Scope, files); note != "" {
 		fmt.Fprintln(out, note)
 	}
 	if dryRun {
@@ -190,13 +194,13 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
-	scope, err := config.ScopeFor(cfg, "documents")
+	res, err := resolveSyncScope(cmd, cfg, repoRoot, server)
 	if err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()
-	if scope == config.LocalScope {
-		fmt.Fprintln(out, "documents scope is local — skipping. Set [sync] documents = personal to opt in.")
+	if res.Scope == config.LocalScope {
+		fmt.Fprintln(out, "documents pull: skipping — "+res.Line())
 		return nil
 	}
 	absRoot, err := filepath.Abs(repoRoot)

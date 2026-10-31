@@ -38,6 +38,10 @@ func newPassFixture(t *testing.T, pageOnly bool) *passFixture {
 		mux.HandleFunc("GET /api/v1/projects/{project}/config", func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode([]any{})
 		})
+		// A personal scope syncs documents too: rehydrate's documents leg finds none.
+		mux.HandleFunc("GET /api/v1/projects/{project}/documents", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "cursor": ""})
+		})
 	})
 	ids, wants, repo := publishedStoriesOn(t, ts, f, nil, "taken", "forked", "edited")
 	if pageOnly {

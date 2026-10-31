@@ -23,7 +23,7 @@ import (
 // versioned and synced; an unedited embedded default always comes from the
 // installed binary.
 
-const uneditedSyncToml = "[sync]\nskills = \"personal\"\nprinciples = \"personal\"\ntasks = \"personal\"\nworkflows = \"personal\"\n" + boundProjectToml
+const uneditedSyncToml = "[sync]\n" + boundProjectToml
 
 func embeddedBodyOf(t *testing.T, kind, name string) string {
 	t.Helper()
@@ -134,10 +134,7 @@ func TestSyncConfigPushSendsNoUneditedDefault(t *testing.T) {
 	if sent["skills/secret.local.md"] {
 		t.Error(".local file was pushed")
 	}
-	for p := range sent {
-		if strings.HasPrefix(p, "backups/") {
-			continue // snapshot records
-		}
+	for _, p := range fixtureKeptPaths {
 		if raw, _, ok := f.cfg.get("probe", p, 0); ok {
 			disk, _ := os.ReadFile(filepath.Join(repo, ".satelle", filepath.FromSlash(p)))
 			if string(raw) != string(disk) {
@@ -166,11 +163,13 @@ func TestSyncConfigPushSendsNoUneditedDefault(t *testing.T) {
 // TestSyncConfigPushDryRunNamesUneditedDefaults (AC2): the dry run lists the
 // defaults under their own label and never as push candidates.
 func TestSyncConfigPushDryRunNamesUneditedDefaults(t *testing.T) {
+	server := "https://example.invalid"
+	signInTo(t, server)
 	repo := syncConfigRepo(t, uneditedSyncToml)
 	writeUneditedFixture(t, repo)
 	pointAt(t, repo)
 	cmd, buf := testCmd()
-	if err := runSyncConfigPush(cmd, "https://example.invalid", "", true); err != nil {
+	if err := runSyncConfigPush(cmd, server, "", true); err != nil {
 		t.Fatalf("dry-run: %v\n%s", err, buf.String())
 	}
 	out := buf.String()
@@ -186,7 +185,9 @@ func TestSyncConfigPushDryRunNamesUneditedDefaults(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(out, "Would push 3 config file(s)") {
+	// The three kept substrate files plus satelle.toml and workflows/agents.toml:
+	// a personal scope sends the settings and agents areas too.
+	if !strings.Contains(out, "Would push 5 config file(s)") {
 		t.Errorf("dry run should count only the edited and authored files:\n%s", out)
 	}
 }
@@ -245,7 +246,7 @@ func newPrincipleMachine(t *testing.T, url string) *snapMachine {
 	t.Helper()
 	m := newSnapMachine(t, url)
 	// A fresh clone on the new binary: no principle files, principles synced.
-	m.repo = syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n"+boundProjectToml)
+	m.repo = syncConfigRepo(t, "[sync]\n"+boundProjectToml)
 	return m
 }
 
@@ -506,7 +507,7 @@ func TestUpgradeConvergeIsNotASubstrateChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundleBefore, err := config.ConfigFiles(cfg, repoRoot, config.Ignore{})
+	bundleBefore, err := config.ConfigFiles(cfg, config.PersonalScope, repoRoot, config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +524,7 @@ func TestUpgradeConvergeIsNotASubstrateChange(t *testing.T) {
 		t.Fatalf("test premise: the older seed was not converged (%v):\n%s", lines, on)
 	}
 
-	bundleAfter, err := config.ConfigFiles(cfg, repoRoot, config.Ignore{})
+	bundleAfter, err := config.ConfigFiles(cfg, config.PersonalScope, repoRoot, config.Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}

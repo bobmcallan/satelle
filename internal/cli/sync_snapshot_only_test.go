@@ -3,6 +3,7 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -166,8 +167,12 @@ func TestSnapshotOnlyRefusesUnavailable(t *testing.T) {
 				if !strings.Contains(err.Error(), "snapshot-only") {
 					t.Errorf("the refusal does not name --snapshot-only: %v", err)
 				}
-				if rec := c.recorded(); len(rec) != 0 {
-					t.Errorf("an unavailable refusal verified nothing and must not be recorded: %v", rec)
+				// An area neither side holds a file of is verified from the manifest
+				// alone; one the hosted copy holds a snapshot of was not verified.
+				for area := range c.recorded() {
+					if area == k.area || slices.Contains(publishedAreas, area) {
+						t.Errorf("an unavailable refusal verified nothing of %s and must not record it: %v", area, c.recorded())
+					}
 				}
 			})
 		}

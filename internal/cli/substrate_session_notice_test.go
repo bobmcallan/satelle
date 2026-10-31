@@ -217,7 +217,9 @@ func TestSubstrateAdvisoryRefreshesThroughTheSeamOncePerWindow(t *testing.T) {
 	}
 
 	// No [sync] stale_after: the doctor does not judge staleness, so neither does the advisory.
-	writeHarnessTOML(t, repo, "[sync]\nskills = \"personal\"\nproject = \"p\"\n")
+	writeHarnessTOML(t, repo, "[sync]\nproject = \"p\"\n")
+	// The rewritten satelle.toml is the settings area; it was synced as written.
+	othersInStepOffline(t, repo, "p", "skills")
 	if err := syncstate.MarkSubstrateAttempt(config.GlobalDir(), repo, time.Time{}); err != nil {
 		t.Fatal(err)
 	}

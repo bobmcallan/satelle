@@ -149,7 +149,7 @@ func TestConfigFilesHonoursIgnore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cfg := Config{Sync: map[string]string{"skills": "personal"}}
+	cfg := Config{}
 	paths := func(b Bundle) string {
 		var ps []string
 		for _, f := range b.Files {
@@ -157,7 +157,7 @@ func TestConfigFilesHonoursIgnore(t *testing.T) {
 		}
 		return strings.Join(ps, ",")
 	}
-	plain, err := ConfigFiles(cfg, repo, Ignore{})
+	plain, err := ConfigFiles(cfg, PersonalScope, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestConfigFilesHonoursIgnore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := ConfigFiles(cfg, repo, ign); paths(got) != paths(plain) {
+	if got, _ := ConfigFiles(cfg, PersonalScope, repo, ign); paths(got) != paths(plain) {
 		t.Fatalf("no .satelleignore must bundle as before, got %s", paths(got))
 	}
 	if err := os.WriteFile(filepath.Join(data, IgnoreFileName), []byte("secret.md\n"), 0o644); err != nil {
@@ -178,7 +178,7 @@ func TestConfigFilesHonoursIgnore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ConfigFiles(cfg, repo, ign)
+	b, err := ConfigFiles(cfg, PersonalScope, repo, ign)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -73,11 +73,13 @@ bound to.`,
 	// bind — record which hosted project this repo's personal sync targets.
 	bind := &cobra.Command{
 		Use:   "bind <slug>",
-		Short: "Bind this repo to a hosted project slug (personal sync target)",
-		Long: `bind records which hosted project this repo's personal sync
-(config / documents / workstate) targets. The slug is written to the committed
-.satelle/satelle.toml [sync] project key — secret-free, since tokens live only
-in the per-user credential store. "satelle project show" prints the binding.
+		Short: "Bind this repo to a hosted project slug (the sync target, and what decides its scope)",
+		Long: `bind writes the project slug to the committed .satelle/satelle.toml [sync]
+project key; "satelle project show" prints it.
+
+Your account decides the scope: a personal-team project syncs personal, a
+project of your team syncs team, any other stays local — from the next sync;
+"satelle sync status" names it.
 
 A project the server reports with no substrate is seeded by its substrate
 holder: bind publishes the repo's team-owned substrate as the project's first

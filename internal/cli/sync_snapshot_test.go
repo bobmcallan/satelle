@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -158,7 +159,7 @@ type snapMachine struct {
 	url         string
 }
 
-const snapToml = "[sync]\nskills = \"personal\"\nworkflows = \"personal\"\ndocuments = \"personal\"\n" + boundProjectToml
+const snapToml = "[sync]\n" + boundProjectToml
 
 func newSnapMachine(t *testing.T, url string) *snapMachine {
 	t.Helper()
@@ -411,8 +412,15 @@ func TestSnapshotBaseRecordedAndPrinted(t *testing.T) {
 			t.Errorf("a snapshot artefact appeared in B's tree: %s", p)
 		}
 	}
-	if len(listTree(t, b.repo)) != len(beforeB)+1 {
-		t.Errorf("B's tree should gain exactly the deployed file: before %v after %v", beforeB, listTree(t, b.repo))
+	// The deployed skill, and the agents layer a personal scope also deploys.
+	gained := []string{}
+	for _, p := range listTree(t, b.repo) {
+		if !slices.Contains(beforeB, p) {
+			gained = append(gained, p)
+		}
+	}
+	if want := []string{".satelle/skills/x.md", ".satelle/workflows/agents.toml"}; !slices.Equal(gained, want) {
+		t.Errorf("B's tree should gain exactly the deployed files %v, gained %v", want, gained)
 	}
 	if got, ok := b.base("skills"); !ok || got.Version != 1 {
 		t.Errorf("B's base = %+v ok=%v", got, ok)

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,10 +20,10 @@ import (
 // binary supplies (unedited embedded defaults) is in step, whatever its local
 // tree lacks — in `sync status`, `sync pull`, `sync reconcile` and doctor alike.
 
-const tasksSyncToml = "[sync]\ntasks = \"personal\"\n" + boundProjectToml
+const tasksSyncToml = "[sync]\n" + boundProjectToml
 
-// tasksMachine is a signed-in checkout opted in to the tasks area, holding only
-// the README scaffold.
+// tasksMachine is a signed-in personal-scope checkout holding only the tasks
+// README scaffold, with every other area in step so a test judges tasks alone.
 func tasksMachine(t *testing.T) (*snapMachine, *snapFake) {
 	t.Helper()
 	testutil.IsolateHome(t)
@@ -33,7 +34,38 @@ func tasksMachine(t *testing.T) (*snapMachine, *snapFake) {
 	}
 	m := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, tasksSyncToml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
 	m.write("tasks/README.md", "# tasks\n")
+	m.inStepExcept(f, "tasks")
 	return m, f
+}
+
+// inStepExcept records every config area but the named ones as synced from the
+// machine's current files, on the hosted copy and in its base, so a test judges
+// only the areas it names.
+func (m *snapMachine) inStepExcept(f *snapFake, except ...string) {
+	m.t.Helper()
+	m.use()
+	cfg, repoRoot, _, err := loadRepoConfig()
+	if err != nil {
+		m.t.Fatal(err)
+	}
+	for _, area := range config.ConfigAreas {
+		if slices.Contains(except, area) {
+			continue
+		}
+		files, err := config.AreaFiles(cfg, repoRoot, area, config.Ignore{})
+		if err != nil {
+			m.t.Fatal(err)
+		}
+		if len(files) == 0 {
+			continue
+		}
+		shas := map[string]string{}
+		for _, cf := range files {
+			f.cfg.put("probe", cf.Path, cf.Content)
+			shas[cf.Path] = snapsync.SHA(cf.Content)
+		}
+		m.adopt(area, f.forgeRecord(m.t, area, 0, shas), shas)
+	}
 }
 
 // hostSnapshot puts the files on the hosted copy as a snapshot (parent = the
@@ -357,12 +389,12 @@ func TestSyncReconcileNamesAServerKeyOnce(t *testing.T) {
 	if err := config.SaveGlobalHostedServer(ts.URL); err != nil {
 		t.Fatal(err)
 	}
-	toml := "[sync]\ntasks = \"personal\"\nsettings = \"personal\"\n" + boundProjectToml
+	toml := "[sync]\n" + boundProjectToml
 	m := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, toml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
 	m.write("tasks/tsk_a.md", "---\nid: tsk_a\ntype: task\n---\nlocal\n")
 	hostSnapshot(t, f, 0, map[string]string{"tasks/tsk_a.md": "---\nid: tsk_a\ntype: task\n---\nhosted\n"})
-	f.cfg.put("probe", "satelle.toml", []byte("[sync]\nsettings = \"personal\"\n"))
-	f.forgeRecord(t, "settings", 0, map[string]string{"satelle.toml": snapsync.SHA([]byte("[sync]\nsettings = \"personal\"\n"))})
+	f.cfg.put("probe", "satelle.toml", []byte("[sync]\n"))
+	f.forgeRecord(t, "settings", 0, map[string]string{"satelle.toml": snapsync.SHA([]byte("[sync]\n"))})
 
 	out, err := m.reconcile()
 	if err != nil {

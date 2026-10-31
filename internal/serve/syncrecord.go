@@ -26,7 +26,7 @@ func recordSnapshotFunc(home string) recordFunc {
 // older failure is left for the UI to hide behind the local marker.
 func scopedRecord(home string, leg func(globalDir, repoPath string, success bool, reason, scope string, now time.Time) error) recordFunc {
 	return func(repoPath string, success bool, reason string) {
-		scope := repoWorkstateScope(repoPath)
+		scope := repoWorkstateScope(home, repoPath)
 		if scope == config.LocalScope.String() {
 			_ = syncstate.RecordScope(home, repoPath, scope)
 			return
@@ -35,16 +35,13 @@ func scopedRecord(home string, leg func(globalDir, repoPath string, success bool
 	}
 }
 
-// repoWorkstateScope is the work-state scope of the repo at root, or "" when its
+// repoWorkstateScope is the sync scope the pass's own `satelle sync` resolved
+// and recorded for the repo's binding (syncstate.RecordedScope), or "" when its
 // config cannot be read — an unknown scope keeps the recorded one.
-func repoWorkstateScope(root string) string {
+func repoWorkstateScope(home, root string) string {
 	cfg, _, _, err := config.LoadRepoProcess(root)
 	if err != nil {
 		return ""
 	}
-	ws, err := config.WorkstateScope(cfg)
-	if err != nil {
-		return ""
-	}
-	return ws.String()
+	return syncstate.RecordedScope(home, root, cfg.SyncProject()).String()
 }

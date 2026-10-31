@@ -6,11 +6,10 @@ package cli
 // work state per project, so a project in a team workspace is shared with every
 // member of that workspace and a personal project is yours alone; a team
 // active-workspace binding never redirects work-state. The one addition is story
-// attachments: with [sync] stories = shared and a team workspace resolved they
-// also go to (and come back from) that workspace's documents collection
-// (sty_61872918). The [sync] scope gates whether each work-state area (stories,
-// ledger, executions) is transferred (local → skip; personal|shared →
-// personal+project).
+// attachments: under a team scope with a team workspace resolved they also go to
+// (and come back from) that workspace's documents collection (sty_61872918). The
+// resolved scope gates whether the work-state areas (stories, ledger,
+// executions) are transferred (local → skip; personal|team → the project).
 
 import (
 	"context"
@@ -37,14 +36,13 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// WorkstateAreas are the [sync] areas that form the work-state kind. A shared
-// scope on any of these only means "eligible to leave the machine" — rows go to
-// the personal workspace; the one other destination is the team workspace's
-// documents collection, which a shared stories scope also sends attachments to.
+// WorkstateAreas are the areas that form the work-state kind. Rows go to the
+// bound project under any non-local scope; the one other destination is the team
+// workspace's documents collection, which a team scope also sends attachments to.
 var WorkstateAreas = config.WorkstateAreas
 
 // ErrWorkstatePullConflict is returned when local and hosted both have data for
-// an opted-in area and --force was not set. Nothing from the refused page on is
+// a synced area and --force was not set. Nothing from the refused page on is
 // written; earlier pages of the pass stay (they passed the same check) and the
 // next pass resumes at the refused page.
 var ErrWorkstatePullConflict = errors.New("workstate pull conflict")
@@ -60,27 +58,27 @@ its bound hosted project.
 The destination is the bound project, so everyone with a role on that project
 shares it: a project in a team workspace is shared with every member of that
 workspace, a personal project is yours alone. A story has two copies — local and
-the project — and a pull merges into local rows rather than replacing them. With
-[sync] stories = shared and a team workspace set, story attachments are also
-copied to that team workspace's documents collection, which is what a team
-remote reads. Skipped entirely unless the workstate area is opted in.`,
+the project — and a pull merges into local rows rather than replacing them. Under
+a team scope with a team workspace set, story attachments are also copied to that
+team workspace's documents collection, which is what a team remote reads. Skipped
+entirely under a local scope.`,
 	}
 
 	var pushServer string
 	var dryRun, full, pushVerbose bool
 	push := &cobra.Command{
 		Use:         "push [story-or-epic-id...]",
-		Short:       "Replicate opted-in work-state areas to the bound hosted project",
+		Short:       "Replicate work-state to the bound hosted project under the resolved scope",
 		Annotations: needsStore(),
 		Args:        cobra.ArbitraryArgs,
-		Long: `push upserts local stories, task-executions and ledger entries, for areas whose
-[sync] scope is personal or shared, into the bound hosted project. Only records
+		Long: `push upserts local stories, task-executions and ledger entries, under a
+personal or team scope, into the bound hosted project. Only records
 changed since the last push are sent; --full re-sends everything. Requires
 "satelle project bind <slug>".
 
-With stories opted in it also uploads each story's markdown attachments, change
-patches included; binary ones stay local. With [sync] stories = shared and
-[hosted] workspace set they also go to the team workspace's documents collection. A refused
+It also uploads each story's markdown attachments, change patches included;
+binary ones stay local. Under a team scope with [hosted] workspace set they also
+go to the team workspace's documents collection. A refused
 upload is retried next push.
 
 Given story ids or an epic id it pushes only those, whole, leaving the cursor.
@@ -92,7 +90,7 @@ remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 		},
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
-	push.Flags().BoolVar(&dryRun, "dry-run", false, "List which areas would be pushed, and which stories would be held, without contacting the server.")
+	push.Flags().BoolVar(&dryRun, "dry-run", false, "List which areas would be pushed, and which stories would be held; only the scope is asked of the account.")
 	push.Flags().BoolVar(&full, "full", false, "Ignore the stored cursor and push the complete set (then advance the cursor).")
 	push.Flags().BoolVar(&pushVerbose, "verbose", false, verboseReachabilityUsage)
 	group.AddCommand(push)
@@ -101,15 +99,14 @@ remote-tracking ref ([sync] hold_unpushed = false turns this off).`,
 	var pullDryRun, force, pullVerbose bool
 	pull := &cobra.Command{
 		Use:         "pull [story-or-epic-id...]",
-		Short:       "Restore opted-in work-state from the bound hosted project into the local store",
+		Short:       "Restore work-state from the bound hosted project into the local store",
 		Annotations: hostedOrigin(needsStore()),
 		Args:        cobra.ArbitraryArgs,
 		Long: `pull fetches the bound hosted project's stories, executions and ledger
-entries for opted-in [sync] areas, and merges them into the local DB by
-id. With stories opted in it also writes their markdown attachments into the
-attachment store (binary ones stay local); with [sync] stories = shared it reads
-the team workspace's documents collection too, and --force takes a differing
-team copy.
+entries under a personal or team scope, and merges them into the local DB by
+id. It also writes their markdown attachments into the attachment store (binary
+ones stay local); under a team scope it reads the team workspace's documents
+collection too, and --force takes a differing team copy.
 
 It refuses only where it would lose local information: a story changed locally
 since hosted, or a ledger row whose payload differs. --force lets hosted win.
@@ -123,7 +120,7 @@ With story ids or an epic id it pulls only those. Requires "satelle project bind
 		},
 	}
 	pull.Flags().StringVar(&pullServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
-	pull.Flags().BoolVar(&pullDryRun, "dry-run", false, "List which areas would be pulled without contacting the server.")
+	pull.Flags().BoolVar(&pullDryRun, "dry-run", false, "List which areas would be pulled; only the scope is asked of the account.")
 	pull.Flags().BoolVar(&force, "force", false, "Materialize even where a same-id local row differs from hosted (hosted wins; local-only rows kept).")
 	pull.Flags().BoolVar(&pullVerbose, "verbose", false, "List every story that left work with no recorded head, not just a count.")
 	group.AddCommand(pull)
@@ -136,7 +133,7 @@ With story ids or an epic id it pulls only those. Requires "satelle project bind
 		Annotations: hostedOrigin(needsStore()),
 		Args:        cobra.ArbitraryArgs,
 		Long: `snapshot fetches the bound project's work-state via gRPC Sync/Snapshot and
-materializes opted-in areas into the local store. Local-only areas are a no-op.
+materializes the work-state areas locally. A local scope is a no-op.
 satelled may exec this verb; it does not talk to the hosted server itself.
 
 A hosted story older than the local row, or than the local ledger's last
@@ -168,22 +165,19 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, 
 	if err != nil {
 		return err
 	}
-	optIn, err := workstateOptIn(a.Config)
-	if err != nil {
-		return err
-	}
-	if len(optIn) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "workstate snapshot: all areas local, nothing to pull")
-		return nil
-	}
 	if repoNotBound(cmd.OutOrStdout(), a, "workstate snapshot") {
 		return nil
 	}
+	server := resolveServer(serverArg)
+	syncScope, err := syncScopeGate(cmd, a.Config, a.RepoRoot, server, "workstate snapshot: nothing to pull")
+	if err != nil || syncScope == config.LocalScope {
+		return err
+	}
+	optIn := workstateOptIn(syncScope)
 	sc, err := resolveScope(cmd.Context(), a, ids, false)
 	if err != nil {
 		return err
 	}
-	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
@@ -211,7 +205,7 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool, 
 		fmt.Fprintf(cmd.OutOrStdout(), "%d item(s) kept — local copy is newer than hosted\n", rep.Kept)
 	}
 	if optIn["stories"] {
-		pullStoryAttachments(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), a, client, server, project, sc.Set, force)
+		pullStoryAttachments(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), a, syncScope, client, server, project, sc.Set, force)
 	}
 	return nil
 }
@@ -279,19 +273,15 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	}
 	out := cmd.OutOrStdout()
 
-	optIn, err := workstateOptIn(a.Config)
-	if err != nil {
-		return err
-	}
-	ws, err := config.WorkstateScope(a.Config)
-	if err != nil {
-		return err
-	}
-	if len(optIn) == 0 {
-		_ = syncstate.RecordScope(config.GlobalDir(), a.RepoRoot, ws.String())
-		fmt.Fprintln(out, "No work-state to push — every work-state area is local. Set [sync] stories|ledger|executions = personal|shared to opt in.")
+	// An unbound repo says so before the scope, whose own line would only repeat it.
+	if !dryRun && repoNotBound(out, a, "workstate push") {
 		return nil
 	}
+	syncScope, err := syncScopeGate(cmd, a.Config, a.RepoRoot, server, "No work-state to push")
+	if err != nil || syncScope == config.LocalScope {
+		return err
+	}
+	optIn := workstateOptIn(syncScope)
 	sc, err := resolveScope(cmd.Context(), a, ids, true)
 	if err != nil {
 		return err
@@ -318,9 +308,6 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 			fmt.Fprintf(out, "  scoped to %d id(s): %s\n", len(sc.IDs), strings.Join(sc.IDs, ", "))
 		}
 		return dryRunHolds(cmd, a, optIn, out, server)
-	}
-	if repoNotBound(out, a, "workstate push") {
-		return nil
 	}
 
 	project, err := resolveBoundProject(a.Config, a.RepoRoot)
@@ -349,13 +336,13 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 				fmt.Fprintf(cmd.ErrOrStderr(), "attachments: %v\n", r)
 			}
 		}()
-		pushStoryAttachments(cmd.Context(), out, cmd.ErrOrStderr(), a, optIn, clientFor, server, project, scope)
+		pushStoryAttachments(cmd.Context(), out, cmd.ErrOrStderr(), a, syncScope, optIn, clientFor, server, project, scope)
 	}()
 	// The repo's recorded push state is the project push's; a scoped push does not
 	// make the repo "pushed".
 	recordOK := func() {
 		if scope == nil {
-			recordWorkstatePush(a.RepoRoot, true, "", ws.String())
+			recordWorkstatePush(a.RepoRoot, true, "", syncScope.String())
 		}
 	}
 	// A scoped push sends its stories whole and reads no cursor: the stored cursor
@@ -427,10 +414,10 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 && len(plan) == 0 {
 		if hadCursor && !full {
 			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
-			recordWorkstatePush(a.RepoRoot, true, "", ws.String())
+			recordWorkstatePush(a.RepoRoot, true, "", syncScope.String())
 			return nil
 		}
-		fmt.Fprintln(out, "No work-state rows to push (opted-in areas are empty).")
+		fmt.Fprintln(out, "No work-state rows to push (the work-state areas are empty).")
 		return nil
 	}
 
@@ -508,11 +495,11 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 	}
 	if appendErr != nil {
 		if errors.Is(appendErr, hosted.ErrLoginRequired) {
-			recordWorkstatePush(a.RepoRoot, false, appendErr.Error(), ws.String())
+			recordWorkstatePush(a.RepoRoot, false, appendErr.Error(), syncScope.String())
 			return appendErr
 		}
 		fmt.Fprintln(out, appendErr.Error())
-		recordOK = func() { recordWorkstatePush(a.RepoRoot, false, appendErr.Error(), ws.String()) }
+		recordOK = func() { recordWorkstatePush(a.RepoRoot, false, appendErr.Error(), syncScope.String()) }
 		defer func() {
 			if retErr == nil {
 				retErr = appendErr
@@ -541,7 +528,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full, ve
 		}
 		res, perr := client.Apply(cmd.Context(), project, hosted.WorkstateIngest{Items: items, Ledger: ledgerRaw})
 		if perr != nil {
-			recordWorkstatePush(a.RepoRoot, false, perr.Error(), ws.String())
+			recordWorkstatePush(a.RepoRoot, false, perr.Error(), syncScope.String())
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return perr
 			}
@@ -664,16 +651,15 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
 	out := cmd.OutOrStdout()
-	ctx := cmd.Context()
-
-	optIn, err := workstateOptIn(a.Config)
-	if err != nil {
-		return err
-	}
-	if len(optIn) == 0 {
-		fmt.Fprintln(out, "No work-state to pull — every work-state area is local. Set [sync] stories|ledger|executions = personal|shared to opt in.")
+	if !dryRun && repoNotBound(out, a, "workstate pull") {
 		return nil
 	}
+	syncScope, err := syncScopeGate(cmd, a.Config, a.RepoRoot, server, "No work-state to pull")
+	if err != nil || syncScope == config.LocalScope {
+		return err
+	}
+	optIn := workstateOptIn(syncScope)
+	ctx := cmd.Context()
 	sc, err := resolveScope(ctx, a, ids, false)
 	if err != nil {
 		return err
@@ -688,9 +674,6 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 		if sc.scoped() {
 			fmt.Fprintf(out, "  scoped to %d id(s): %s\n", len(sc.IDs), strings.Join(sc.IDs, ", "))
 		}
-		return nil
-	}
-	if repoNotBound(out, a, "workstate pull") {
 		return nil
 	}
 
@@ -720,12 +703,12 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	}
 	// The pulled stories' attachments follow them, whether or not any row moved.
 	if optIn["stories"] {
-		defer pullStoryAttachments(ctx, out, cmd.ErrOrStderr(), a, client, server, project, sc.Set, force)
+		defer pullStoryAttachments(ctx, out, cmd.ErrOrStderr(), a, syncScope, client, server, project, sc.Set, force)
 	}
 	nItems, nLedger, nKept := rep.Items, rep.Ledger, rep.Kept
 	if nItems == 0 && nLedger == 0 && nKept == 0 {
 		if rep.complete() {
-			fmt.Fprintf(out, "No work-state rows to pull (%s; hosted opted-in areas are empty).\n", rep.label())
+			fmt.Fprintf(out, "No work-state rows to pull (%s; the hosted work-state areas are empty).\n", rep.label())
 		} else {
 			fmt.Fprintf(out, "No work-state rows to pull (%s; nothing changed on hosted since the last pass).\n", rep.label())
 		}
@@ -753,18 +736,17 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force, v
 	return nil
 }
 
-func workstateOptIn(cfg config.Config) (map[string]bool, error) {
+// workstateOptIn is the work-state areas a sync under scope moves: every one
+// under a non-local scope, none under a local one.
+func workstateOptIn(scope config.Scope) map[string]bool {
 	optIn := map[string]bool{}
-	for _, area := range WorkstateAreas {
-		scope, serr := config.ScopeFor(cfg, area)
-		if serr != nil {
-			return nil, fmt.Errorf("sync workstate area %q: %w", area, serr)
-		}
-		if scope != config.LocalScope {
-			optIn[area] = true
-		}
+	if scope == config.LocalScope {
+		return optIn
 	}
-	return optIn, nil
+	for _, area := range WorkstateAreas {
+		optIn[area] = true
+	}
+	return optIn
 }
 
 // maxConflictIDs caps how many conflicting ids per area the refusal names.
@@ -883,7 +865,7 @@ func jsonPayloadEqual(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
-// upsertWorkstatePage upserts hosted rows into the local store for opted-in
+// upsertWorkstatePage upserts hosted rows into the local store for the synced
 // areas and returns the items it applied, with counts of rows applied and of
 // local rows kept because they (or their ledger) are newer than hosted. Status
 // forwarding and the story-view regeneration are the caller's: a paged pass

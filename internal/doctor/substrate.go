@@ -33,17 +33,14 @@ func CheckSubstrateSync(repoRoot, dataDir, globalDir string, now time.Time) heal
 		return health.Findings{health.Warn(health.IDSyncConfig, "Substrate sync config",
 			"could not load satelle.toml; substrate sync not judged").About(cfgPath)}
 	}
-	areas, err := config.SubstrateAreas(cfg)
-	if err != nil {
-		return health.Findings{health.Error(health.IDSyncConfig, "Substrate sync config", err.Error()).About(cfgPath)}
-	}
+	project := cfg.SyncProject()
+	areas := config.SubstrateAreas(syncstate.RecordedScope(globalDir, repoRoot, project))
 	if len(areas) == 0 {
 		return health.Findings{health.Info(health.IDSyncSubstrateOk, "Substrate is local-only",
-			"every substrate area is local; not flagged as unbacked").About(repoRoot)}
+			"sync scope local ("+localScopeWhy(cfg, globalDir, repoRoot)+"); not flagged as unbacked").About(repoRoot)}
 	}
 
 	server := config.ResolveHostedServer(cfg)
-	project := config.ResolveBoundProject(cfg, repoRoot)
 	var out health.Findings
 	if project == "" || !signedIn(server) {
 		out = append(out, health.Error(health.IDSyncSubstrateUnbound, "Substrate unbound",

@@ -20,6 +20,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/snapsync"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/syncscope"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -47,6 +48,10 @@ func (m *snapMachine) recorded() map[string]syncstate.SubstrateArea {
 
 // published is a machine that has pushed one file in each of skills, workflows
 // and documents, so all three are in step.
+// publishedAreas are the areas publishedMachine leaves a hosted snapshot of: its
+// files, plus the settings and agents layer every syncing scope sends.
+var publishedAreas = []string{"skills", "workflows", "documents", "settings", "agents"}
+
 func publishedMachine(t *testing.T, url string) *snapMachine {
 	t.Helper()
 	a := newSnapMachine(t, url)
@@ -110,7 +115,7 @@ func TestSyncStatusNeverSyncedExitsNonZero(t *testing.T) {
 	for _, area := range []string{"workflows", "documents"} {
 		wantState(t, out, area, "in step")
 	}
-	if len(a.recorded()) != 3 {
+	if len(a.recorded()) != len(config.SubstrateAreas(config.PersonalScope)) {
 		t.Errorf("status must record each verified area: %v", a.recorded())
 	}
 }
@@ -255,17 +260,32 @@ func TestSyncStatusPendingPullIsBehind(t *testing.T) {
 	}
 }
 
-func TestSyncStatusUnavailableWithoutLogin(t *testing.T) {
+// A signed-out machine is local: status names that and the login, checks
+// nothing and records nothing.
+func TestSyncStatusSignedOutIsLocal(t *testing.T) {
 	ts, _ := newSnapServer(t) // no credential seeded
 	a := newSnapMachine(t, ts.URL)
+	a.write("skills/x.md", "x\n")
+	out, err := a.status()
+	if err != nil || strings.TrimSpace(out) != "scope: local — "+syncscope.ReasonSignedOut+"\npush: enabled" {
+		t.Fatalf("signed-out status = %v\n%s", err, out)
+	}
+	if rec := a.recorded(); len(rec) != 0 {
+		t.Errorf("a local status verified nothing and must not record areas: %v", rec)
+	}
+}
+
+func TestSyncStatusUnavailableServer(t *testing.T) {
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	signInTo(t, gone.URL)
+	a := newSnapMachine(t, gone.URL)
 	a.write("skills/x.md", "x\n")
 	out, err := a.status()
 	if err == nil {
 		t.Fatalf("an unreadable hosted copy must exit non-zero:\n%s", out)
 	}
-	if cols := wantState(t, out, "skills", "unavailable"); cols[4] != "satelle login" {
-		t.Errorf("next = %q, want satelle login", cols[4])
-	}
+	wantState(t, out, "skills", "unavailable")
 	if rec := a.recorded(); len(rec) != 0 {
 		t.Errorf("an unavailable answer verified nothing and must not be recorded: %v", rec)
 	}
@@ -274,8 +294,8 @@ func TestSyncStatusUnavailableWithoutLogin(t *testing.T) {
 func TestSyncStatusAllLocalChecksNothing(t *testing.T) {
 	tempRepo(t)
 	out, err := runRoot(t, "sync", "status")
-	if err != nil || !strings.Contains(out, "Nothing to check") {
-		t.Fatalf("all-local status = %v\n%s", err, out)
+	if err != nil || !strings.Contains(out, "scope: local — "+syncscope.ReasonUnbound) {
+		t.Fatalf("unbound status = %v\n%s", err, out)
 	}
 }
 
@@ -358,8 +378,8 @@ func TestSyncOperationsRecordDriverDerivedState(t *testing.T) {
 func TestSyncRehydrateRestoresSettingsFromSnapshot(t *testing.T) {
 	ts, _ := newSnapServer(t)
 	seedCred(t, ts.URL)
-	const allPersonal = "[sync]\nall = \"personal\"\n" + boundProjectToml
-	a := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, allPersonal), state: t.TempDir() + "/state-a.json"}
+	const withStale = "[sync]\nstale_after = \"6h\"\n" + boundProjectToml
+	a := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, withStale), state: t.TempDir() + "/state-a.json"}
 	a.write("skills/x.md", "x\n")
 	a.pushConfig()
 
@@ -374,7 +394,7 @@ func TestSyncRehydrateRestoresSettingsFromSnapshot(t *testing.T) {
 	if !outcome.SettingsRestored {
 		t.Fatalf("satelle.toml was not restored from the settings snapshot:\n%s", buf.String())
 	}
-	if got := b.read("satelle.toml"); !strings.Contains(got, `all = "personal"`) || !strings.Contains(got, `project = "probe"`) {
+	if got := b.read("satelle.toml"); !strings.Contains(got, `stale_after = "6h"`) || !strings.Contains(got, `project = "probe"`) {
 		t.Errorf("restored satelle.toml = %q", got)
 	}
 	if b.has("backups/sync-conflicts/settings/satelle.toml") {
@@ -383,19 +403,22 @@ func TestSyncRehydrateRestoresSettingsFromSnapshot(t *testing.T) {
 	if got := b.recorded()["settings"].State; got != "in step" {
 		t.Errorf("recorded settings = %q", got)
 	}
-	if summary := rehydrateDoneSummary(outcome); !strings.Contains(summary, "settings: restored") {
+	if summary := rehydrateDoneSummary(outcome, syncscope.Resolution{Scope: config.PersonalScope, Account: testAccountEmail, Team: syncscope.Team{Name: "Ada"}, Project: "probe"}); !strings.Contains(summary, "settings: restored") || !strings.Contains(summary, "scope: personal") {
 		t.Errorf("rehydrate's closing line = %q", summary)
 	}
 }
 
-func TestRehydrateNoteNamesHostedSettingsKey(t *testing.T) {
-	tempRepo(t)
-	note := rehydrateAllLocalNote(false)
-	if !strings.Contains(note, "settings area") || !strings.Contains(note, "`satelle.toml`") || !strings.Contains(note, "satelle sync status") {
-		t.Errorf("note = %q", note)
-	}
-	if strings.Contains(note, "settings/satelle.toml") {
-		t.Errorf("the hosted key is satelle.toml, not settings/satelle.toml: %q", note)
+// Rehydrate's closing line names the resolved scope and, for a local one, the
+// resolver's reason — not a settings key to restore.
+func TestRehydrateSummaryNamesResolvedScope(t *testing.T) {
+	for _, reason := range []string{syncscope.ReasonUnbound, syncscope.ReasonSignedOut} {
+		summary := rehydrateDoneSummary(deployOutcome{}, syncscope.Resolution{Scope: config.LocalScope, Reason: reason})
+		if !strings.Contains(summary, "scope: local — "+reason) || !strings.Contains(summary, "settings: not restored") {
+			t.Errorf("summary = %q", summary)
+		}
+		if strings.Contains(summary, "[sync] all") || strings.Contains(summary, "settings area") {
+			t.Errorf("summary names a removed scope key: %q", summary)
+		}
 	}
 }
 
@@ -409,7 +432,7 @@ func TestSyncStatusTakesAreasFromConfigNotLayout(t *testing.T) {
 	seedCred(t, ts.URL)
 	repo := t.TempDir()
 	meta := filepath.Join(repo, "meta")
-	writeRepoFile(t, repo, "meta/satelle.toml", "data_dir = \"meta\"\n[sync]\nall = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, "meta/satelle.toml", "data_dir = \"meta\"\n[sync]\n"+boundProjectToml)
 	writeRepoFile(t, repo, "meta/constitution.md", "# c\n")
 	writeRepoFile(t, repo, "meta/skills/x.md", "x\n")
 	t.Setenv("SATELLE_CONFIG", filepath.Join(meta, "satelle.toml"))
@@ -701,17 +724,6 @@ func TestSyncStatusStoryRefusesSubstrateNotOnHostedCopy(t *testing.T) {
 		wantRefusal(t, out, err, "skills", "unavailable", touched, "check the server, then satelle sync status")
 	})
 
-	t.Run("unavailable without login", func(t *testing.T) {
-		ts, _ := newSnapServer(t) // no credential seeded
-		a := newSnapMachine(t, ts.URL)
-		gitTree(t, a.repo, ".satelle/")
-		a.use()
-		e := engageSyncStory(t, a.repo)
-		e.engage()
-		editAfterEngage(t, a.repo, touched, "x\n")
-		out, err := a.storyStatus(e.id)
-		wantRefusal(t, out, err, "skills", "unavailable", touched, "satelle login")
-	})
 }
 
 // AC2: substrate the story touched that is in step, or behind a hosted copy that
@@ -764,7 +776,7 @@ func TestSyncStatusStoryTouchedNoSyncedSubstrate(t *testing.T) {
 		"non-substrate path": {snapToml, func(t *testing.T, repo string) {
 			writeRepoFile(t, repo, "a.go", "package a\n\nvar changed = true\n")
 		}},
-		"local-scope area": {"[sync]\nskills = \"local\"\n" + boundProjectToml, func(t *testing.T, repo string) {
+		"signed out": {"[sync]\n" + boundProjectToml, func(t *testing.T, repo string) {
 			editAfterEngage(t, repo, ".satelle/skills/x.md", "x\n")
 		}},
 		"no sync table": {boundProjectToml, func(t *testing.T, repo string) {
@@ -829,7 +841,7 @@ func TestSyncStatusStoryHonoursNonDefaultDataDir(t *testing.T) {
 	ts, _ := newSnapServer(t)
 	seedCred(t, ts.URL)
 	repo := t.TempDir()
-	writeRepoFile(t, repo, "meta/satelle.toml", "data_dir = \"meta\"\n[sync]\nskills = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, "meta/satelle.toml", "data_dir = \"meta\"\n[sync]\n"+boundProjectToml)
 	writeRepoFile(t, repo, "meta/constitution.md", "# c\n")
 	t.Setenv("SATELLE_CONFIG", filepath.Join(repo, "meta", "satelle.toml"))
 	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "doc-state.json")

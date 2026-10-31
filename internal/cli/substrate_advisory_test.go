@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ import (
 // Substrate continuity advisories (sty_7562055c): the line engagement and
 // SessionStart print when substrate is not in step.
 
-const skillsOnlyToml = "[review]\ngate_create = false\n\n[sync]\nskills = \"personal\"\n" + boundProjectToml
+const skillsOnlyToml = "[review]\ngate_create = false\n\n[sync]\n" + boundProjectToml
 
 // skillsMachine is a checkout that syncs only skills, so a deploy never reaches
 // the route files an engaging machine needs.
@@ -98,7 +99,7 @@ func advisoryLines(out string) []string {
 
 func TestEngagementAdvisoryDriftedInStepAndOffline(t *testing.T) {
 	testutil.IsolateHome(t)
-	ts, _ := newSnapServer(t)
+	ts, f := newSnapServer(t)
 	seedCred(t, ts.URL)
 	if err := config.SaveGlobalHostedServer(ts.URL); err != nil {
 		t.Fatal(err)
@@ -108,6 +109,9 @@ func TestEngagementAdvisoryDriftedInStepAndOffline(t *testing.T) {
 	a.pushConfig()
 	b := engagingMachine(t, ts.URL)
 	b.deploy()
+	b.resolvedScope(config.PersonalScope)
+	// A personal scope judges every area; this test judges skills.
+	b.inStepExcept(f, "skills")
 	id := b.createStory()
 
 	// In step: nothing is printed.
@@ -116,6 +120,9 @@ func TestEngagementAdvisoryDriftedInStepAndOffline(t *testing.T) {
 	}
 
 	// Drifted: another clone advanced the area and this machine never checked.
+	// That clone first takes what this machine holds in step, so its push moves
+	// skills alone.
+	a.deploy()
 	a.write("skills/x.md", "from A\n")
 	a.pushConfig()
 	out := b.engage(id)
@@ -151,6 +158,8 @@ func TestEngagementAdvisoryUnboundMachineIsUnverified(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := engagingMachine(t, ts.URL)
+	// An earlier sync resolved personal; the machine has since signed out.
+	b.resolvedScope(config.PersonalScope)
 	b.write("skills/x.md", "local only\n")
 	id := b.createStory()
 	lines := advisoryLines(b.engage(id))
@@ -179,7 +188,7 @@ func substrateHookRepo(t *testing.T, skill, synced string) string {
 	repo := sessionContextRepo(t)
 	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "doc-state.json")
 	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
-	writeHarnessTOML(t, repo, "[sync]\nskills = \"personal\"\nproject = \"p\"\nstale_after = \"24h\"\n")
+	writeHarnessTOML(t, repo, "[sync]\nproject = \"p\"\nstale_after = \"24h\"\n")
 	seedCred(t, config.DefaultHostedServer)
 	data := filepath.Join(repo, config.DefaultDataDir)
 	if err := os.MkdirAll(filepath.Join(data, "skills"), 0o755); err != nil {
@@ -192,6 +201,10 @@ func substrateHookRepo(t *testing.T, skill, synced string) string {
 	if err := hosted.SaveAreaBase(config.DefaultHostedServer, "p", repo, "skills", base); err != nil {
 		t.Fatal(err)
 	}
+	if err := syncstate.RecordResolvedScope(config.GlobalDir(), repo, config.PersonalScope, "p", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	othersInStepOffline(t, repo, "p", "skills")
 	if err := syncstate.RecordSubstrate(config.GlobalDir(), repo, map[string]syncstate.AreaCheck{"skills": {State: snapsync.StateInStep}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -220,5 +233,88 @@ func TestHookContextSubstrateAdvisoryDriftedAndInStep(t *testing.T) {
 	_, content, _, emitted = runContext(t, "grok", grokDualPayload(channel, "post_tool_use", "sess-instep"))
 	if !emitted || len(advisoryLines(content)) != 0 {
 		t.Fatalf("an in-step SessionStart must print no advisory: emitted=%v\n%s", emitted, content)
+	}
+}
+
+// The session advisory judges a drifted skill from the scope the last resolve
+// recorded for the explicit [sync] project binding: an unbound repo (a scope
+// recorded under its directory name does not count), a bound repo recorded
+// local, and a record for another binding stay silent; a recorded team scope for
+// the current binding names the drift.
+func TestHookContextSubstrateAdvisoryJudgesFromRecordedScope(t *testing.T) {
+	channel := config.Config{}.SessionContextEvent("grok")
+	cases := []struct {
+		name      string
+		unbind    bool
+		scope     config.Scope
+		binding   string // "" is the repo directory name
+		wantDrift bool
+	}{
+		{"unbound, scope recorded under the directory name", true, config.TeamScope, "", false},
+		{"bound, recorded local", false, config.LocalScope, "p", false},
+		{"bound, recorded for another binding", false, config.TeamScope, "other", false},
+		{"bound, recorded team", false, config.TeamScope, "p", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := substrateHookRepo(t, "edited\n", "x\n")
+			if c.unbind {
+				writeHarnessTOML(t, repo, "[sync]\nstale_after = \"24h\"\n")
+			}
+			binding := c.binding
+			if binding == "" {
+				binding = filepath.Base(repo)
+			}
+			if err := syncstate.RecordResolvedScope(config.GlobalDir(), repo, c.scope, binding, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			_, content, _, emitted := runContext(t, "grok", grokDualPayload(channel, "post_tool_use", "sess-scope"))
+			if !emitted {
+				t.Fatal("SessionStart context was not emitted")
+			}
+			lines := advisoryLines(content)
+			if !c.wantDrift {
+				if len(lines) != 0 {
+					t.Fatalf("a local scope must print no advisory: %v", lines)
+				}
+				return
+			}
+			if len(lines) != 1 || !strings.Contains(lines[0], "skills unpushed") {
+				t.Fatalf("a recorded team scope must name the drifted skill: %v\n%s", lines, content)
+			}
+		})
+	}
+}
+
+// othersInStepOffline records every substrate area but except as synced from
+// the repo's current files — its base and its last check — so an offline judge
+// of a personal scope, which reads every area, sees only the areas a test names.
+func othersInStepOffline(t *testing.T, repo, project string, except ...string) {
+	t.Helper()
+	data := filepath.Join(repo, config.DefaultDataDir)
+	cfg, _, err := config.Load(filepath.Join(data, config.ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ign, err := config.LoadIgnore(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]syncstate.AreaCheck{}
+	for _, area := range config.SubstrateAreas(config.PersonalScope) {
+		if slices.Contains(except, area) {
+			continue
+		}
+		local, err := snapsync.LocalShas(cfg, repo, area, ign)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := hosted.SaveAreaBase(config.DefaultHostedServer, project, repo, area, hosted.AreaBase{Version: 1, Files: local}); err != nil {
+			t.Fatal(err)
+		}
+		states[area] = syncstate.AreaCheck{State: snapsync.StateInStep}
+	}
+	if err := syncstate.RecordSubstrate(config.GlobalDir(), repo, states, time.Now()); err != nil {
+		t.Fatal(err)
 	}
 }

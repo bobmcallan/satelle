@@ -49,7 +49,7 @@ mean on the per-area pushes.`,
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview what each area would push; only the scope is asked of the account.")
 	cmd.Flags().Bool("prune", false, pruneFlagUsage)
 	cmd.Flags().Bool("force", false, forceFlagUsage)
 	cmd.Flags().Bool("verbose", false, verboseReachabilityUsage)
@@ -74,11 +74,8 @@ func runSyncPush(cmd *cobra.Command, serverArg string, dryRun bool) error {
 	if err := refusePullOnly(a.RepoRoot); err != nil {
 		return err
 	}
-	if optedIn, err := syncOptedIn(a.Config); err != nil {
+	if scope, err := syncScopeGate(cmd, a.Config, a.RepoRoot, resolveServer(serverArg), "Nothing to push"); err != nil || scope == config.LocalScope {
 		return err
-	} else if !optedIn {
-		fmt.Fprintln(cmd.OutOrStdout(), "Nothing to push — every .satelle area is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
-		return nil
 	}
 	return runSyncPushLegs(cmd, serverArg, dryRun, nil)
 }
@@ -116,7 +113,7 @@ full-tree recovery that overwrites local files.`,
 // before any is planned for writing, which is where an edit can slip in.
 var syncPullBeforeApply func()
 
-// runSyncPull classifies every opted-in area with the probe `sync status` runs,
+// runSyncPull classifies every area the resolved scope syncs with the probe `sync status` runs,
 // pulls the ones that are behind through the area-restricted apply reconcile
 // shares, and reports the rest with their next command. Plain pull and
 // --fast-forward-only apply one rule; the flag only quiets the report.
@@ -125,16 +122,13 @@ func runSyncPull(cmd *cobra.Command, serverArg string, fastForwardOnly bool) err
 	if err != nil {
 		return err
 	}
-	areas, err := config.SubstrateAreas(cfg)
-	if err != nil {
+	out := cmd.OutOrStdout()
+	server := resolveServer(serverArg)
+	scope, err := syncScopeGate(cmd, cfg, repoRoot, server, "Nothing to pull")
+	if err != nil || scope == config.LocalScope {
 		return err
 	}
-	out := cmd.OutOrStdout()
-	if len(areas) == 0 {
-		fmt.Fprintln(out, "Nothing to pull — every config area and documents is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
-		return nil
-	}
-	server := resolveServer(serverArg)
+	areas := config.SubstrateAreas(scope)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}

@@ -1,8 +1,12 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -35,19 +39,19 @@ func TestHoldUnpushed(t *testing.T) {
 }
 
 // A satelle.toml still carrying the retired [sync] hold_stale_after key (hosted
-// holds are gone, sty_40853d02) loads without error, the key disturbs no area
-// and is never minted as one.
+// holds are gone, sty_40853d02) loads without error, the key disturbs no other
+// key and is never minted as an area.
 func TestRetiredHoldKeyLoadsSilently(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "satelle.toml")
-	if err := os.WriteFile(path, []byte("[sync]\nstale_after = \"24h\"\nhold_stale_after = \"2h\"\nstories = \"personal\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("[sync]\nstale_after = \"24h\"\nhold_stale_after = \"2h\"\nproject = \"p\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := Load(path)
 	if err != nil {
 		t.Fatalf("a config carrying the retired key must load: %v", err)
 	}
-	if sc, err := ScopeFor(cfg, "stories"); err != nil || sc == LocalScope {
-		t.Errorf("stories scope = %v, %v; the retired key must not disturb the areas", sc, err)
+	if cfg.SyncProject() != "p" {
+		t.Errorf("project = %q; the retired key must not disturb the other keys", cfg.SyncProject())
 	}
 	for _, a := range SyncAreas {
 		if a == "hold_stale_after" {
@@ -61,15 +65,15 @@ func TestRetiredHoldKeyLoadsSilently(t *testing.T) {
 func TestSyncTableAcceptsBareBoolean(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "satelle.toml")
-	if err := os.WriteFile(path, []byte("[sync]\nstories = \"personal\"\nhold_unpushed = false\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("[sync]\nproject = \"p\"\nhold_unpushed = false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Sync["stories"] != "personal" {
-		t.Errorf("stories = %q, want personal", cfg.Sync["stories"])
+	if cfg.Sync["project"] != "p" {
+		t.Errorf("project = %q, want p", cfg.Sync["project"])
 	}
 	if got, err := HoldUnpushed(cfg); err != nil || got {
 		t.Errorf("HoldUnpushed = %v, %v; want false, nil", got, err)
@@ -93,7 +97,7 @@ func TestSyncTableAcceptsBareBoolean(t *testing.T) {
 }
 
 func TestParseScope(t *testing.T) {
-	cases := map[string]Scope{"local": LocalScope, "personal": PersonalScope, "shared": SharedScope}
+	cases := map[string]Scope{"local": LocalScope, "personal": PersonalScope, "team": TeamScope}
 	for raw, want := range cases {
 		got, err := ParseScope(raw)
 		if err != nil {
@@ -109,91 +113,95 @@ func TestParseScope(t *testing.T) {
 	if _, err := ParseScope("typo"); err == nil {
 		t.Error("ParseScope(\"typo\") did not error")
 	}
-}
-
-func TestScopeFor(t *testing.T) {
-	cfg := Config{Sync: map[string]string{"skills": "personal", "documents": "shared"}}
-
-	if got, err := ScopeFor(cfg, "skills"); err != nil || got != PersonalScope {
-		t.Errorf("ScopeFor(skills) = %v, %v; want PersonalScope, nil", got, err)
-	}
-	if got, err := ScopeFor(cfg, "documents"); err != nil || got != SharedScope {
-		t.Errorf("ScopeFor(documents) = %v, %v; want SharedScope, nil", got, err)
-	}
-	// Unset area → local (the default).
-	if got, err := ScopeFor(cfg, "workflows"); err != nil || got != LocalScope {
-		t.Errorf("ScopeFor(unset) = %v, %v; want LocalScope, nil", got, err)
-	}
-	// Explicitly set but invalid → error, never a silent local.
-	bad := Config{Sync: map[string]string{"tasks": "typo"}}
-	if _, err := ScopeFor(bad, "tasks"); err == nil {
-		t.Error("ScopeFor(invalid scope) did not error")
+	if _, err := ParseScope("shared"); err == nil {
+		t.Error("ParseScope(\"shared\") must error: the ladder is local|personal|team")
 	}
 }
 
-func TestScopeForAllFallthrough(t *testing.T) {
-	// Blanket all = personal: every SyncAreas name resolves to personal, but
-	// `all` itself is not a walk area.
-	blanket := Config{Sync: map[string]string{"all": "personal"}}
-	for _, area := range SyncAreas {
-		if got, err := ScopeFor(blanket, area); err != nil || got != PersonalScope {
-			t.Errorf("ScopeFor(%q) under all=personal = %v, %v; want PersonalScope, nil", area, got, err)
+// AC1: every removed [sync] scope key, in satelle.toml or in the
+// satelle.local.toml overlay, makes Load fail naming the key and the heal.
+func TestSyncTableRefusesAreaScopeKeys(t *testing.T) {
+	want := append([]string{"all"}, "workflows", "principles", "skills", "constitution", "agents", "tasks", "settings", "documents", "stories", "ledger", "executions")
+	got := append([]string{}, RemovedSyncScopeKeys...)
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("RemovedSyncScopeKeys = %v, want %v", got, want)
+	}
+	for _, key := range RemovedSyncScopeKeys {
+		for _, file := range []string{ConfigName, LocalConfigName} {
+			t.Run(file+"/"+key, func(t *testing.T) {
+				dir := t.TempDir()
+				committed := "[sync]\nproject = \"p\"\n"
+				line := "[sync]\n" + key + " = \"personal\"\n"
+				if file == ConfigName {
+					committed += key + " = \"personal\"\n"
+				} else if err := os.WriteFile(filepath.Join(dir, LocalConfigName), []byte(line), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(dir, ConfigName)
+				if err := os.WriteFile(path, []byte(committed), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				_, _, err := Load(path)
+				if err == nil {
+					t.Fatalf("Load accepted [sync] %s in %s", key, file)
+				}
+				for _, w := range []string{"[sync] " + key, "satelle init", file} {
+					if !strings.Contains(err.Error(), w) {
+						t.Errorf("error %q does not name %q", err, w)
+					}
+				}
+				var pe *ParseError
+				if !errors.As(err, &pe) {
+					t.Errorf("error %T is not a ParseError naming the file", err)
+				}
+			})
 		}
 	}
+}
 
-	// A per-area key overrides all; a blank per-area value falls through to all.
-	override := Config{Sync: map[string]string{"all": "personal", "skills": "shared", "documents": ""}}
-	if got, err := ScopeFor(override, "skills"); err != nil || got != SharedScope {
-		t.Errorf("ScopeFor(skills) with override = %v, %v; want SharedScope, nil", got, err)
+// FindSyncScopeKeys reads both files without the refusal, reports only removed
+// keys under [sync], and ignores a same-named key in another table.
+func TestFindSyncScopeKeys(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ConfigName), []byte("[substrate_roots]\nskills = \".\"\n\n[sync]\nproject = \"p\"\nskills = \"personal\"\nall = \"personal\"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if got, err := ScopeFor(override, "documents"); err != nil || got != PersonalScope {
-		t.Errorf("ScopeFor(blank documents) = %v, %v; want PersonalScope (falls through to all), nil", got, err)
+	if err := os.WriteFile(filepath.Join(dir, LocalConfigName), []byte("[sync]\ndocuments = \"local\"\nworkspace = \"w\"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if got, err := ScopeFor(override, "tasks"); err != nil || got != PersonalScope {
-		t.Errorf("ScopeFor(unset tasks) = %v, %v; want PersonalScope (falls through to all), nil", got, err)
+	got, err := FindSyncScopeKeys(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{ConfigName: {"all", "skills"}, LocalConfigName: {"documents"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("FindSyncScopeKeys = %v, want %v", got, want)
 	}
 
-	// Unset all still defaults areas to local.
-	if got, err := ScopeFor(Config{Sync: map[string]string{"all": ""}}, "skills"); err != nil || got != LocalScope {
-		t.Errorf("ScopeFor(skills) under blank all = %v, %v; want LocalScope, nil", got, err)
+	clean := t.TempDir()
+	if err := os.WriteFile(filepath.Join(clean, ConfigName), []byte("[substrate_roots]\nskills = \".\"\n[sync]\nproject = \"p\"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-
-	// Invalid all errors ONLY for areas that fall through to it; a valid
-	// per-area override beside a bad all resolves without error.
-	badAll := Config{Sync: map[string]string{"all": "typo", "skills": "personal"}}
-	if _, err := ScopeFor(badAll, "tasks"); err == nil {
-		t.Error("ScopeFor(tasks) under all=typo did not error on fallthrough")
+	if got, err := FindSyncScopeKeys(clean); err != nil || len(got) != 0 {
+		t.Errorf("clean tree: FindSyncScopeKeys = %v, %v; want none", got, err)
 	}
-	if got, err := ScopeFor(badAll, "skills"); err != nil || got != PersonalScope {
-		t.Errorf("ScopeFor(skills override) beside bad all = %v, %v; want PersonalScope, nil (override wins)", got, err)
+	if got, err := FindSyncScopeKeys(t.TempDir()); err != nil || len(got) != 0 {
+		t.Errorf("missing files: FindSyncScopeKeys = %v, %v; want none", got, err)
 	}
 }
 
-// WorkstateScope is local only when every work-state area is local, else the
-// widest area scope; a bad value in any area is an error (sty_3df5f95a).
-func TestWorkstateScope(t *testing.T) {
-	cases := []struct {
-		name string
-		sync map[string]string
-		want Scope
-	}{
-		{"unset", nil, LocalScope},
-		{"all local", map[string]string{"all": "local"}, LocalScope},
-		{"all personal", map[string]string{"all": "personal"}, PersonalScope},
-		{"one personal area", map[string]string{"all": "local", "stories": "personal"}, PersonalScope},
-		{"mixed with one shared", map[string]string{"stories": "personal", "ledger": "shared"}, SharedScope},
-		{"non-workstate area ignored", map[string]string{"skills": "shared"}, LocalScope},
+// A repo with no [sync] project has no binding: the directory-name default of
+// ResolveBoundProject is never the binding scope resolves from (AC2).
+func TestUnboundRepoHasEmptyBinding(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "my-repo")
+	cfg := Config{Sync: SyncTable{"stale_after": "24h"}}
+	if got := cfg.SyncProject(); got != "" {
+		t.Errorf("SyncProject = %q, want empty", got)
 	}
-	for _, c := range cases {
-		got, err := WorkstateScope(Config{Sync: c.sync})
-		if err != nil || got != c.want {
-			t.Errorf("%s: WorkstateScope = %v, %v; want %v, nil", c.name, got, err, c.want)
-		}
-	}
-	// An invalid value in a later area errors even after a non-local one.
-	bad := Config{Sync: map[string]string{"stories": "personal", "ledger": "typo"}}
-	if _, err := WorkstateScope(bad); err == nil {
-		t.Error("WorkstateScope(invalid ledger) did not error")
+	if got := ResolveBoundProject(cfg, repo); got != "my-repo" {
+		t.Fatalf("fixture: ResolveBoundProject = %q, want the directory-name default", got)
 	}
 }
 
@@ -220,8 +228,8 @@ func TestFileShared(t *testing.T) {
 	if FileShared(LocalScope, sharedFM) {
 		t.Error("FileShared(local, shared:true) = true, want false — flag ignored outside personal")
 	}
-	if FileShared(SharedScope, sharedFM) {
-		t.Error("FileShared(shared, shared:true) = true, want false — flag ignored outside personal")
+	if FileShared(TeamScope, sharedFM) {
+		t.Error("FileShared(team, shared:true) = true, want false — flag ignored outside personal")
 	}
 }
 

@@ -35,9 +35,10 @@
 # (roles workflows name; sty_552d2d87) — it is deliberately NOT listed below;
 # its machine-local twin, agents.local.toml, is.
 # Execution detail belongs in ~/.satelle/agents.toml; secrets in satelle.local.toml.
-# Continuity is local disk by default; with [sync] <area> = personal the bound
-# hosted project backs that area up and can rehydrate it (push = backup;
-# documents pull / config deploy = sync down). Git is not the recovery path.
+# Continuity is local disk by default; once the repo is bound and the account's
+# scope is personal or team, the bound hosted project backs it up and can
+# rehydrate it (push = backup; pull / config deploy = sync down). Git is not the
+# recovery path.
 # Runtime state (satelle.db, backups, stories cache) lives under
 # ~/.satelle/<repo-key>/ — outside the repo. .satelle/logs is a symlink pointer
 # to that logs directory and is listed here only when .satelle/ is not already ignored.

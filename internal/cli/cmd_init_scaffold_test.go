@@ -23,9 +23,8 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 		"data_dir", "db", "substrate_roots", "log_level",
 		"logs_max_size_kb", "logs_max_files", "stories_keep_closed", "stories_keep_days",
 		"[review]", "[gate]", "[vars]", "[sync]",
-		// AC1 pointers
-		"local|personal|shared", "satelle project bind", "satelle login",
-		`all = "personal"`,
+		// AC1 pointers: the scope comes from the account and the binding.
+		"satelle project bind", "satelle login", "satelle sync status",
 		// sty_698e70b6: .local exclusion is documented where the scope ladder is.
 		".local",
 	} {
@@ -72,11 +71,10 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Load of uncommented scaffold example: %v\n--- body ---\n%s", err, body)
 	}
-	if got := cfg.Sync["all"]; got != "personal" {
-		t.Errorf("Sync[all] = %q, want personal", got)
-	}
-	if got := cfg.Sync["documents"]; got != "personal" {
-		t.Errorf("Sync[documents] = %q, want personal", got)
+	for _, k := range config.RemovedSyncScopeKeys {
+		if _, ok := cfg.Sync[k]; ok {
+			t.Errorf("the example seeds the removed [sync] key %q", k)
+		}
 	}
 	if got := cfg.Sync["project"]; got != "my-project-slug" {
 		t.Errorf("Sync[project] = %q, want my-project-slug", got)

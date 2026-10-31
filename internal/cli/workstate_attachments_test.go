@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	storiesOnlyToml  = "[sync]\nstories = \"personal\"\nledger = \"local\"\n\n[hosted]\nproject = \"probe\"\n"
+	storiesOnlyToml  = "[sync]\n\n[hosted]\nproject = \"probe\"\n"
 	attachmentPrefix = "/api/v1/projects/probe/documents/"
 )
 
@@ -244,21 +244,24 @@ func TestAttachmentPushUploadsByteExact(t *testing.T) {
 
 // TestAttachmentExposure (AC4, replaces sty_948ad5df's
 // TestWorkstatePushCarriesNoAttachmentBodies): a planted change patch is never
-// uploaded when stories are local; when opted in it goes only to the bound
+// uploaded under a local scope; under a syncing scope it goes only to the bound
 // project's documents route; and it is never inside a workstate Apply.
 func TestAttachmentExposure(t *testing.T) {
 	const secret = "planted-change-attachment-secret-xyz-4d42e13e"
 
-	t.Run("stories local: nothing uploaded", func(t *testing.T) {
+	t.Run("scope local: nothing uploaded", func(t *testing.T) {
 		url, f, docs := attachmentServer(t)
-		workstateRepo(t, "[sync]\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+		useScope(t, kindForeign)
+		workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 		id := createStoryID(t, "exposure local")
 		attachDoc(t, id, "change-in_progress-done", "change", "diff\n+"+secret+"\n")
 		runPush(t, url)
 		if n := docs.requestCount(); n != 0 {
-			t.Errorf("documents requests with stories local = %d, want 0", n)
+			t.Errorf("documents requests under a local scope = %d, want 0", n)
 		}
-		assertNoSecretInApply(t, f, secret)
+		if f.postCount("probe") != 0 || f.chain.appendCount() != 0 {
+			t.Error("a local scope sent work-state to the server")
+		}
 	})
 
 	t.Run("stories personal: documents route only", func(t *testing.T) {

@@ -1203,26 +1203,36 @@ func syncKeyPresent(dataDir, key string) bool {
 // `satelle init` and `satelle migrate` both remove it via removeRetiredSyncKey.
 const retiredHoldStaleAfterKey = "hold_stale_after"
 
-// removeRetiredSyncKey removes [sync] hold_stale_after when it is set
-// (sty_40853d02): the key judged how long a hosted hold's holder could go
-// unseen, and hosted holds are gone. Nothing else in the file is touched.
+// removeRetiredSyncKey removes the retired [sync] keys: hold_stale_after from
+// satelle.toml (sty_40853d02: it judged how long a hosted hold's holder could go
+// unseen, and hosted holds are gone), and every config.RemovedSyncScopeKeys key
+// from satelle.toml and satelle.local.toml (sync scope comes from the account's
+// binding now). It edits raw bytes and never loads the config, whose load refuses
+// those keys, so it runs before any heal that does. Nothing else is touched.
 func removeRetiredSyncKey(dataDir string) (bool, error) {
-	path := filepath.Join(dataDir, config.ConfigName)
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
+	changed := false
+	for _, name := range []string{config.ConfigName, config.LocalConfigName} {
+		path := filepath.Join(dataDir, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return changed, err
 		}
-		return false, err
+		content, _ := config.RemoveSyncScopeKeys(string(raw))
+		if name == config.ConfigName {
+			content = config.RemoveKey(content, "sync", retiredHoldStaleAfterKey)
+		}
+		if content == string(raw) {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return changed, err
+		}
+		changed = true
 	}
-	content := config.RemoveKey(string(raw), "sync", retiredHoldStaleAfterKey)
-	if content == string(raw) {
-		return false, nil
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return false, err
-	}
-	return true, nil
+	return changed, nil
 }
 
 // healSyncKey writes [sync] key = value when the key is absent.

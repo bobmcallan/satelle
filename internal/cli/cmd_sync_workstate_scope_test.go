@@ -21,7 +21,7 @@ import (
 const scopeTheme = "epic:scope-test"
 
 // scopeToml opts executions in too, so a push that leaked one would show.
-const scopeToml = "[sync]\nstories = \"personal\"\nledger = \"personal\"\nexecutions = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
+const scopeToml = "[sync]\n\n[hosted]\nproject = \"probe\"\n"
 
 // scopeFixture is a local store holding an epic of two members, a story outside
 // it, and an execution and a task under the first member. Every story has two

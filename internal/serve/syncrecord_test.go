@@ -11,17 +11,30 @@ import (
 	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
-// syncRepo is a repo whose satelle.toml sets [sync] all = scope.
-func syncRepo(t *testing.T, scope string) string {
+// syncRepo is a repo bound to project p whose last sync resolved scope for that
+// binding (a local scope is an unbound repo, which records nothing).
+func syncRepo(t *testing.T, home, scope string) string {
 	t.Helper()
 	repo := t.TempDir()
 	dir := filepath.Join(repo, config.DefaultDataDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "[sync]\nall = \"" + scope + "\"\n"
+	body := "[sync]\nproject = \"p\"\n"
+	if scope == "local" {
+		body = "[sync]\n"
+	}
 	if err := os.WriteFile(filepath.Join(dir, config.ConfigName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if scope != "local" {
+		sc, err := config.ParseScope(scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := syncstate.RecordResolvedScope(home, repo, sc, "p", time.Now()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return repo
 }
@@ -44,7 +57,7 @@ func TestScopedRecordLocalRecordsOnlyScope(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			home := testutil.IsolateHome(t)
-			repo := syncRepo(t, "local")
+			repo := syncRepo(t, home, "local")
 			if err := c.seed(home, repo, true, "", "", t0); err != nil {
 				t.Fatal(err)
 			}
@@ -69,7 +82,7 @@ func TestScopedRecordLocalRecordsOnlyScope(t *testing.T) {
 // An opted-in repo records its pass with the resolved scope, as before.
 func TestScopedRecordOptedInRecordsPass(t *testing.T) {
 	home := testutil.IsolateHome(t)
-	repo := syncRepo(t, "personal")
+	repo := syncRepo(t, home, "personal")
 	recordPushFunc(home)(repo, false, "hosted 505")
 	st, _, err := syncstate.Load(home, repo)
 	if err != nil {

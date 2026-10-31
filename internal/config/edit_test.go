@@ -97,7 +97,7 @@ project = "alpha"
 server = "https://x"
 
 [sync]
-all = "personal"
+stale_after = "24h"
 `
 	got := RemoveSection(in, "hosted")
 	if strings.Contains(got, "[hosted]") || strings.Contains(got, `project = "alpha"`) {
@@ -169,12 +169,12 @@ gate_create = true
 }
 
 func TestRemoveKey(t *testing.T) {
-	in := "[sync]\nall = \"personal\"\n\n[hosted]\nproject = \"alpha\"\nserver = \"https://x\"\n"
+	in := "[sync]\nstale_after = \"24h\"\n\n[hosted]\nproject = \"alpha\"\nserver = \"https://x\"\n"
 	got := RemoveKey(in, "hosted", "project")
 	if strings.Contains(got, `project = "alpha"`) {
 		t.Errorf("project not removed: %s", got)
 	}
-	if !strings.Contains(got, `all = "personal"`) {
+	if !strings.Contains(got, `stale_after = "24h"`) {
 		t.Errorf("sync lost: %s", got)
 	}
 	if !strings.Contains(got, "server") {

@@ -13,12 +13,19 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/doctor"
 	"github.com/bobmcallan/satelle/internal/health"
+	"github.com/bobmcallan/satelle/internal/syncstate"
+	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 func TestInitChangedAreas(t *testing.T) {
+	home := testutil.IsolateHome(t)
 	repo := t.TempDir()
-	cfg := config.Config{Sync: map[string]string{"settings": "personal", "skills": "personal"}}
+	cfg := config.Config{Sync: map[string]string{"project": "p"}}
+	// The last sync resolved personal for the binding: every substrate area syncs.
+	if err := syncstate.RecordResolvedScope(home, repo, config.PersonalScope, "p", time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	files := func(paths ...string) []verb.SeededFile {
 		var out []verb.SeededFile
 		for _, p := range paths {
@@ -35,12 +42,25 @@ func TestInitChangedAreas(t *testing.T) {
 		{"satelle.toml is settings", files(".satelle/satelle.toml"), []string{"settings"}},
 		{"a skill file is skills", files(".satelle/skills/mine.md"), []string{"skills"}},
 		{"areas are de-duplicated and sorted", files(".satelle/skills/a.md", ".satelle/satelle.toml", ".satelle/skills/b.md"), []string{"settings", "skills"}},
-		{"a local area is not synced", files(".satelle/documents/doc.md", ".satelle/constitution.md"), nil},
+		{"documents and the constitution sync under a personal scope", files(".satelle/documents/doc.md", ".satelle/constitution.md"), []string{"constitution", "documents"}},
 		{"files no area owns", files(".satelle/deployed.version", ".satelle/hooks/satelle-hook.sh"), nil},
 	} {
 		if got := initChangedAreas(cfg, repo, c.changed); !slices.Equal(got, c.want) {
 			t.Errorf("%s: areas = %v, want %v", c.name, got, c.want)
 		}
+	}
+	// A recorded local scope, or a record for another binding, syncs nothing.
+	if err := syncstate.RecordResolvedScope(home, repo, config.LocalScope, "p", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := initChangedAreas(cfg, repo, files(".satelle/skills/mine.md")); got != nil {
+		t.Errorf("recorded local: areas = %v, want none", got)
+	}
+	if err := syncstate.RecordResolvedScope(home, repo, config.PersonalScope, "other", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := initChangedAreas(cfg, repo, files(".satelle/skills/mine.md")); got != nil {
+		t.Errorf("recorded for another binding: areas = %v, want none", got)
 	}
 }
 
@@ -88,7 +108,7 @@ func TestInitPushesChangedSubstrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	syncedToml := func(project string) string {
-		return fmt.Sprintf("[sync]\nproject = %q\nskills = \"personal\"\nsettings = \"personal\"\nstale_after = \"24h\"\n%s = \"1h\"\n",
+		return fmt.Sprintf("[sync]\nproject = %q\nstale_after = \"24h\"\n%s = \"1h\"\n",
 			project, retiredHoldStaleAfterKey)
 	}
 	unpushed := func(repo string) []health.Finding {
@@ -113,9 +133,36 @@ func TestInitPushesChangedSubstrate(t *testing.T) {
 		}
 	}
 
+	// syncedRepo starts from the canonical agents layer: a personal scope syncs the
+	// agents area, and a legacy-path agents.toml takes two inits to settle (moved,
+	// then given [model_order]), which is not what this test judges.
+	syncedRepo := func(project string) string {
+		repo := syncConfigRepo(t, syncedToml(project))
+		data := filepath.Join(repo, ".satelle")
+		if err := os.MkdirAll(filepath.Join(data, "workflows"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(filepath.Join(data, "agents.toml"), filepath.Join(data, "workflows", "agents.toml")); err != nil {
+			t.Fatal(err)
+		}
+		if err := runInit(io.Discard, repo, true, nil); err != nil {
+			t.Fatalf("settle init: %v", err)
+		}
+		// The settle removed the retired key; put it back for the heal to remove.
+		tomlPath := filepath.Join(data, config.ConfigName)
+		raw, err := os.ReadFile(tomlPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tomlPath, []byte(strings.Replace(string(raw), "[sync]\n", "[sync]\n"+retiredHoldStaleAfterKey+" = \"1h\"\n", 1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return repo
+	}
+
 	// Control: the same heal with no push leaves the settings area unpushed, so
 	// the assertions below fail on an init that only rewrites satelle.toml.
-	control := syncConfigRepo(t, syncedToml("probe-control"))
+	control := syncedRepo("probe-control")
 	publish(control)
 	if err := runInit(io.Discard, control, true, nil); err != nil {
 		t.Fatalf("control init: %v", err)
@@ -124,7 +171,7 @@ func TestInitPushesChangedSubstrate(t *testing.T) {
 		t.Fatal("guard: init's rewrite of satelle.toml must leave settings unpushed when nothing pushes it")
 	}
 
-	repo := syncConfigRepo(t, syncedToml("probe"))
+	repo := syncedRepo("probe")
 	publish(repo)
 	var roots []string
 	prev := initPush

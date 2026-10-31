@@ -369,18 +369,19 @@ func workstateRepo(t *testing.T, satelleToml string) string {
 	return repo
 }
 
-// TestSyncWorkstatePushSkipsLocal: all-local work-state areas produce the
-// skip message and no network call (AC1, AC5).
+// TestSyncWorkstatePushSkipsLocal: a bound repo whose account is not in the
+// project's team resolves local — the skip message and no network call (AC1, AC5).
 func TestSyncWorkstatePushSkipsLocal(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "") // no [sync] → all local
+	workstateRepo(t, "[sync]\nproject = \"probe\"\n")
+	useScope(t, kindForeign)
 
 	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
 	if err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "every work-state area is local") {
+	if !strings.Contains(out, "scope: local") || !strings.Contains(out, "is not a member") {
 		t.Fatalf("expected local-skip message, got: %q", out)
 	}
 	if f.postCount("probe") != 0 {
@@ -388,13 +389,14 @@ func TestSyncWorkstatePushSkipsLocal(t *testing.T) {
 	}
 }
 
-// A push records the work-state scope it resolved: an all-local push records
-// local and leaves the seeded success as it was, and an opted-in push records
-// its own scope (sty_3df5f95a).
+// A push records the scope it resolved: a push the account resolves local records
+// local and leaves the seeded success as it was, and one it resolves personal
+// records personal (sty_3df5f95a).
 func TestSyncWorkstatePushRecordsScope(t *testing.T) {
 	ts, _ := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	repo := workstateRepo(t, "[sync]\nall = \"local\"\n\n[hosted]\nproject = \"probe\"\n")
+	repo := workstateRepo(t, "[sync]\nproject = \"probe\"\n")
+	acct := useScope(t, kindForeign)
 	t0 := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	if err := syncstate.RecordPush(config.GlobalDir(), repo, true, "", "personal", t0); err != nil {
 		t.Fatal(err)
@@ -408,13 +410,13 @@ func TestSyncWorkstatePushRecordsScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st.Scope != "local" || !st.PushLastSuccess.Equal(t0) {
-		t.Fatalf("all-local push: Scope %q, push_last_success %v; want local, %v", st.Scope, st.PushLastSuccess, t0)
+		t.Fatalf("local push: Scope %q, push_last_success %v; want local, %v", st.Scope, st.PushLastSuccess, t0)
 	}
 
-	cfg := "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(cfg), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// The account joins the project's team: no file changes.
+	acct.mu.Lock()
+	acct.fallback = kindPersonal
+	acct.mu.Unlock()
 	if out, err := runRoot(t, "story", "create", "--title", "Scope probe", "--body", "A story to push.", "--acceptance", "1. pushed"); err != nil {
 		t.Fatalf("story create: %v\n%s", err, out)
 	}
@@ -422,7 +424,7 @@ func TestSyncWorkstatePushRecordsScope(t *testing.T) {
 		t.Fatalf("personal push: %v\n%s", err, out)
 	}
 	if st, _, _ = syncstate.Load(config.GlobalDir(), repo); st.Scope != "personal" || !st.PushLastSuccess.After(t0) {
-		t.Fatalf("opted-in push: Scope %q, push_last_success %v; want personal, after %v", st.Scope, st.PushLastSuccess, t0)
+		t.Fatalf("bound push: Scope %q, push_last_success %v; want personal, after %v", st.Scope, st.PushLastSuccess, t0)
 	}
 }
 
@@ -431,7 +433,7 @@ func TestSyncWorkstatePushRecordsScope(t *testing.T) {
 func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	// Create a story so there is something to push.
 	out, err := runRoot(t, "story", "create",
@@ -503,7 +505,7 @@ func TestSyncWorkstatePushNoREST(t *testing.T) {
 	t.Cleanup(ts.Close)
 	attachFakeWorkstateGRPC(t, f)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Workstate no-REST probe",
@@ -530,7 +532,7 @@ func TestSyncWorkstatePushNoREST(t *testing.T) {
 func TestSyncWorkstatePushIgnoresTeamBinding(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"shared\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Team binding probe",
@@ -568,7 +570,7 @@ func TestSyncWorkstatePushRequiresBoundProject(t *testing.T) {
 	t.Cleanup(ts.Close)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n") // no project
+	workstateRepo(t, "[sync]\n") // no project
 
 	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
 	if err != nil && strings.Contains(err.Error(), "no sync project") {
@@ -576,17 +578,18 @@ func TestSyncWorkstatePushRequiresBoundProject(t *testing.T) {
 	}
 }
 
-// TestSyncWorkstatePullSkipsLocal: all-local areas skip with zero GET calls.
+// TestSyncWorkstatePullSkipsLocal: a local scope skips with zero GET calls.
 func TestSyncWorkstatePullSkipsLocal(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "")
+	workstateRepo(t, "[sync]\nproject = \"probe\"\n")
+	useScope(t, kindForeign)
 
 	out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL)
 	if err != nil {
 		t.Fatalf("pull: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "every work-state area is local") {
+	if !strings.Contains(out, "scope: local") || !strings.Contains(out, "is not a member") {
 		t.Fatalf("expected local-skip message, got: %q", out)
 	}
 	if f.getCount() != 0 {
@@ -597,13 +600,14 @@ func TestSyncWorkstatePullSkipsLocal(t *testing.T) {
 func TestSyncWorkstateSnapshotSkipsLocal(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "")
+	workstateRepo(t, "[sync]\nproject = \"probe\"\n")
+	useScope(t, kindForeign)
 
 	out, err := runRoot(t, "sync", "workstate", "snapshot", "--server", ts.URL)
 	if err != nil {
 		t.Fatalf("snapshot: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "all areas local") {
+	if !strings.Contains(out, "scope: local") || !strings.Contains(out, "is not a member") {
 		t.Fatalf("expected local-skip message, got: %q", out)
 	}
 	if f.getCount() != 0 {
@@ -623,7 +627,7 @@ func TestSyncWorkstatePullRequiresBoundProject(t *testing.T) {
 	t.Cleanup(ts.Close)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n")
+	workstateRepo(t, "[sync]\n")
 
 	out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL)
 	if err != nil && strings.Contains(err.Error(), "no sync project") {
@@ -635,7 +639,7 @@ func TestSyncWorkstatePullRequiresBoundProject(t *testing.T) {
 func TestSyncWorkstatePullDryRun(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL, "--dry-run")
 	if err != nil {
@@ -653,7 +657,7 @@ func TestSyncWorkstatePullDryRun(t *testing.T) {
 func TestSyncWorkstatePullRoundTrip(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Roundtrip story",
@@ -736,7 +740,7 @@ func TestSyncWorkstatePullRoundTrip(t *testing.T) {
 func TestSyncWorkstateSnapshotRoundTrip(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Snapshot story",
@@ -800,7 +804,7 @@ func TestSyncWorkstateSnapshotRoundTrip(t *testing.T) {
 func TestSyncWorkstatePullIgnoresTeamBinding(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"shared\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 
 	// Seed hosted via push first.
 	out, err := runRoot(t, "story", "create",
@@ -838,7 +842,7 @@ func TestSyncWorkstatePullIgnoresTeamBinding(t *testing.T) {
 func TestSyncWorkstatePushCursorSurvivesMidRunFailure(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	repo := workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	repo := workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	prevItem, prevLed := workstateItemChunk, workstateLedgerChunk
 	workstateItemChunk, workstateLedgerChunk = 1, 1
@@ -900,7 +904,7 @@ func TestSyncWorkstatePushCursorSurvivesMidRunFailure(t *testing.T) {
 func TestSyncWorkstateIncrementalRehydrate(t *testing.T) {
 	ts, _ := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Keep me", "--body", "body", "--acceptance", "1. ok", "--category", "feature")
@@ -964,7 +968,7 @@ func TestSyncWorkstateIncrementalRehydrate(t *testing.T) {
 func TestSyncWorkstatePushIncrementalOnlyChanged(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	var ids []string
 	for _, title := range []string{"Alpha", "Beta"} {
@@ -1034,7 +1038,7 @@ func TestWorkstatePushExcludesBinaryAttachment(t *testing.T) {
 
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	_ = workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	_ = workstateRepo(t, "[sync]\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Binary exclusion",

@@ -18,7 +18,7 @@ import (
 
 // hostedToml binds the repo explicitly and keeps a story's full history for a day
 // after its newest event.
-const hostedToml = "[sync]\nstories = \"personal\"\nledger = \"personal\"\nhold_unpushed = false\nproject = \"probe\"\nrecent_window = \"24h\"\n"
+const hostedToml = "[sync]\nhold_unpushed = false\nproject = \"probe\"\nrecent_window = \"24h\"\n"
 
 // hostedModeRepo is a repo in hosted mode (sty_0dc600e1): the user is signed in to
 // the fake server, which is the machine's hosted server, and [sync] project is set.

@@ -72,7 +72,7 @@ func TestMachineScopeStraysCleanRepoZero(t *testing.T) {
 func TestMachineScopeStraysIgnoresSyncProjectAndStaleAfter(t *testing.T) {
 	testutil.IsolateHome(t)
 	dataDir := t.TempDir()
-	body := "[sync]\nproject = \"satelle\"\nstale_after = \"24h\"\nall = \"personal\"\n"
+	body := "[sync]\nproject = \"satelle\"\nstale_after = \"24h\"\nhold_unpushed = false\n"
 	if err := os.WriteFile(filepath.Join(dataDir, ConfigName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

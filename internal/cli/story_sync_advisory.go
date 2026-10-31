@@ -45,9 +45,9 @@ func storySyncAdvisory(a *app.App) string {
 	if st, ok, _ := syncstate.Load(config.GlobalDir(), a.RepoRoot); ok {
 		conflicts, snapshotAt = st.StoryConflicts, st.SnapshotLastSuccess
 	}
-	// An unreadable scope keeps the recorded state: it must not be destroyed on a
-	// config error.
-	if optIn, err := workstateOptIn(a.Config); err == nil && len(optIn) == 0 && len(conflicts) > 0 {
+	// Under a local recorded scope the conflicts are moot. Offline: the scope is
+	// the one the last sync resolved for the repo's binding (syncstate.RecordedScope).
+	if syncstate.RecordedScope(config.GlobalDir(), a.RepoRoot, a.Config.SyncProject()) == config.LocalScope && len(conflicts) > 0 {
 		_ = syncstate.RecordStoryConflicts(config.GlobalDir(), a.RepoRoot, nil, slices.Sorted(maps.Keys(conflicts)), time.Now().UTC())
 		conflicts = nil
 	}

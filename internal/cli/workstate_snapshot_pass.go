@@ -37,7 +37,7 @@ const (
 	passScoped  = "scoped"
 )
 
-// passReport is what a pass did. Hosted holds the opted-in items this pass
+// passReport is what a pass did. Hosted holds the synced items this pass
 // received (never ledger rows, which a pass does not retain).
 type passReport struct {
 	Kind                string
@@ -114,7 +114,7 @@ func (r passReport) label() string {
 	return fmt.Sprintf("%s pass, %d page(s)", r.Kind, r.Pages)
 }
 
-// snapshotAreas names the opted-in work-state areas a token was saved for.
+// snapshotAreas names the synced work-state areas a token was saved for.
 func snapshotAreas(optIn map[string]bool) string {
 	var areas []string
 	for _, area := range WorkstateAreas {
@@ -153,7 +153,7 @@ type snapshotPass struct {
 // runPagedWorkstateSnapshot pulls the project's work-state in pages, applying
 // and checkpointing each page as it arrives. It starts from the stored position
 // — a resume checkpoint, else the last completed pass's since-token — unless
-// force is set, none is stored, or the opted-in areas changed; a token the
+// force is set, none is stored, or the synced areas changed; a token the
 // server rejects falls back to one full pass. The token is replaced only when
 // every page has landed.
 func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, client *hosted.Client, server, project string, optIn map[string]bool, force bool, mode snapshotMode) (passReport, error) {
@@ -181,7 +181,7 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 	discard := ""
 	switch {
 	case stored.Areas != areas:
-		discard = "opted-in work-state areas changed"
+		discard = "synced work-state areas changed"
 	case stored.StoreID != storeID:
 		discard = "local store changed"
 	}
@@ -262,7 +262,7 @@ func (p *snapshotPass) settle(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-// optedIn is the part of a page the opted-in areas let through.
+// optedIn is the part of a page the synced areas let through.
 func (p *snapshotPass) optedIn(pg hosted.SnapshotPage) ([]hosted.WorkstateItem, []hosted.WorkstateLedgerRow) {
 	items, ledgerRows := pg.Items, pg.Ledger
 	if !(p.optIn["stories"] || p.optIn["executions"]) {
