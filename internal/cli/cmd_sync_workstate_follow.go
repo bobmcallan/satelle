@@ -96,10 +96,12 @@ type follower struct {
 }
 
 // apply takes one delivered event. A story with no local row is left on the
-// server. A story whose history is on the server is fetched whole when the story
-// is now held, and otherwise left there. Any other story takes the event, its row
-// is rebuilt from its chain, its head is saved, and it is trimmed when the store
-// need not hold it.
+// server. A story whose history is on the server is fetched whole when it is now
+// performing — its row, moved by the event when the event is a status transition —
+// and otherwise left there; outside team scope it is always fetched, since only a
+// team-scope store leaves history on the server (sty_7c01ca14). Any other story
+// takes the event, its row is rebuilt from its chain, its head is saved, and in team
+// scope it is trimmed when the store need not hold it.
 func (f *follower) apply(storyID string, ev hosted.ChainEvent) error {
 	ctx := context.Background()
 	led := f.a.Store.Ledger
@@ -115,20 +117,19 @@ func (f *follower) apply(storyID string, ev hosted.ChainEvent) error {
 		return fmt.Errorf("decode %s of %s: %w", ev.ID, storyID, err)
 	}
 	now := time.Now().UTC()
-	window, err := config.RecentWindow(f.a.Config)
-	if err != nil {
-		return err
-	}
-	held, err := verb.HeldStories(ctx, led, "", window, now)
-	if err != nil {
-		return err
-	}
+	team := teamScope(f.a)
 	remote, err := led.HasMark(ctx, storyID, ledger.MarkHistoryRemote)
 	if err != nil {
 		return err
 	}
 	if remote {
-		if !held[storyID] && !e.CreatedAt.After(now.Add(-window)) {
+		moved := row
+		if e.Kind == ledger.KindStatusTransition {
+			if to := verb.TransitionTo(e); to != "" {
+				moved.Status = to
+			}
+		}
+		if team && !verb.StoryPerforming(ctx)(moved) {
 			return nil
 		}
 		if _, err := fetchRemoteHistory(ctx, f.a, storyID); err != nil {
@@ -149,7 +150,11 @@ func (f *follower) apply(storyID string, ev hosted.ChainEvent) error {
 			fmt.Fprintf(f.w, "workstate follow: rebuild %s from its chain: %v\n", storyID, err)
 		}
 	}
-	if held, err = verb.HeldStories(ctx, led, "", window, now); err != nil {
+	if !team {
+		return nil
+	}
+	held, err := verb.HeldStories(ctx, led, f.a.Store.Stories)
+	if err != nil {
 		return err
 	}
 	n, err := verb.TrimStoryHistory(ctx, led, held, map[string]string{storyID: ev.ID})

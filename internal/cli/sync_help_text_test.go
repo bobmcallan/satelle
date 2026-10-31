@@ -20,7 +20,7 @@ func syncScopeKeyUses(text string) []string {
 		phrase, line *regexp.Regexp
 	}
 	var pats []pat
-	for _, k := range config.RemovedSyncScopeKeys {
+	for _, k := range config.RemovedSyncKeys {
 		q := regexp.QuoteMeta(k)
 		pats = append(pats, pat{k, regexp.MustCompile(`\[sync\]\s+` + q + `\b`), regexp.MustCompile(`^\s*#?\s*` + q + `\s*=`)})
 	}

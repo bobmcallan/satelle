@@ -1,3 +1,14 @@
+## [0.0.823] - 2026-11-01
+
+### Breaking
+- **`[sync] recent_window` is removed.** A team-scope local store now holds a story's full history while the story is in a performing state of its governing route, whichever location works it, and otherwise keeps the story's row alone; opening the story (`satelle story get`, `satelle story route`, the web story page) fetches its history, and the next trim drops it again unless the story is then performing. Personal and local scope keep every story's history and trim nothing. A `satelle.toml` or `satelle.local.toml` that carries `recent_window` fails to load, naming the key and `satelle init`, and a settings push withholds it.
+- init-heals: `satelle init` (or `satelle init --all --yes` for every registered repo) removes `[sync] recent_window` from `satelle.toml` and `satelle.local.toml` and leaves every other line as it was. (sty_7c01ca14)
+
+## [serve-v0.0.261] - 2026-11-01
+
+### Changed
+- The service binary reads no [sync] recent_window and holds team-scope history by the governing route's performing states. (sty_7c01ca14)
+
 ## [0.0.822] - 2026-11-01
 
 ### Changed

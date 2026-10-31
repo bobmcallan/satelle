@@ -173,7 +173,7 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		chain: newChainPull(client, server, project, a.RepoRoot, errw),
 	}
 	defer p.chain.close()
-	if err := holdHosted(ctx, a, p.chain, time.Now().UTC()); err != nil {
+	if err := holdHosted(ctx, a, p.chain); err != nil {
 		return passReport{}, err
 	}
 	var opts hosted.SnapshotOptions
@@ -235,7 +235,7 @@ func runPagedWorkstateSnapshot(ctx context.Context, a *app.App, errw io.Writer, 
 		return p.rep, err
 	}
 	p.chain.flush()
-	if _, err := trimHostedHistory(ctx, a, server, project, now); err != nil {
+	if _, err := trimHostedHistory(ctx, a, server, project); err != nil {
 		return p.rep, fmt.Errorf("trim the local history: %w", err)
 	}
 	if res.SyncToken == "" {

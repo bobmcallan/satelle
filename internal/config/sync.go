@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -77,16 +76,32 @@ var SyncAreas = buildSyncAreas()
 // (FindSyncScopeKeys), and a settings push withholds them.
 var RemovedSyncScopeKeys = append([]string{"all"}, SyncAreas...)
 
-// syncScopeHeal is the command that removes RemovedSyncScopeKeys from a tree.
+// RemovedRecentWindowKey is the [sync] duration that once kept a story's full
+// history in hosted mode after its newest event. A team-scope store now holds a
+// story's history while it is performing, and personal and local scope hold every
+// chain (sty_7c01ca14), so it is refused and removed like the scope keys.
+const RemovedRecentWindowKey = "recent_window"
+
+// RemovedSyncKeys is every removed [sync] key: RemovedSyncScopeKeys and
+// RemovedRecentWindowKey. Loading a file carrying one fails, satelle init removes
+// them (FindSyncScopeKeys, RemoveSyncScopeKeys), and a settings push withholds them.
+var RemovedSyncKeys = append(append([]string{}, RemovedSyncScopeKeys...), RemovedRecentWindowKey)
+
+// syncScopeHeal is the command that removes RemovedSyncKeys from a tree.
 const syncScopeHeal = "satelle init"
 
-// RemovedSyncScopeKeyError is the refusal for one removed [sync] scope key.
+// RemovedSyncScopeKeyError is the refusal for one removed [sync] key, naming why
+// it went and the heal.
 func RemovedSyncScopeKeyError(key string) error {
-	return fmt.Errorf("sync: [sync] %s is removed — sync scope now comes from the account's project binding; run %q to remove it", key, syncScopeHeal)
+	why := "sync scope now comes from the account's project binding"
+	if key == RemovedRecentWindowKey {
+		why = "a team-scope store holds a story's history while it is performing, and personal and local scope keep every chain"
+	}
+	return fmt.Errorf("sync: [sync] %s is removed — %s; run %q to remove it", key, why, syncScopeHeal)
 }
 
 func isRemovedSyncScopeKey(k string) bool {
-	for _, r := range RemovedSyncScopeKeys {
+	for _, r := range RemovedSyncKeys {
 		if r == k {
 			return true
 		}
@@ -95,7 +110,7 @@ func isRemovedSyncScopeKey(k string) bool {
 }
 
 // FindSyncScopeKeys reports, per file name (ConfigName, LocalConfigName) under
-// dataDir, the RemovedSyncScopeKeys its [sync] table carries, sorted. It decodes
+// dataDir, the RemovedSyncKeys its [sync] table carries, sorted. It decodes
 // each file as plain TOML — never through Config, so the refusal cannot stop it
 // — and a missing file contributes nothing.
 func FindSyncScopeKeys(dataDir string) (map[string][]string, error) {
@@ -128,12 +143,12 @@ func FindSyncScopeKeys(dataDir string) (map[string][]string, error) {
 	return out, nil
 }
 
-// RemoveSyncScopeKeys removes every RemovedSyncScopeKeys key from a TOML
-// document's [sync] table, returning the edited text and the keys removed in
-// RemovedSyncScopeKeys order. Every other line is kept as it was.
+// RemoveSyncScopeKeys removes every RemovedSyncKeys key from a TOML document's
+// [sync] table, returning the edited text and the keys removed in RemovedSyncKeys
+// order. Every other line is kept as it was.
 func RemoveSyncScopeKeys(s string) (string, []string) {
 	var removed []string
-	for _, k := range RemovedSyncScopeKeys {
+	for _, k := range RemovedSyncKeys {
 		if next := RemoveKey(s, "sync", k); next != s {
 			removed = append(removed, k)
 			s = next
@@ -151,11 +166,6 @@ const syncStaleAfterKey = "stale_after"
 // not published. Reserved so it is never treated as an area.
 const syncHoldUnpushedKey = "hold_unpushed"
 
-// syncRecentWindowKey is the [sync] duration a story stays held with its full
-// history in hosted mode after its newest event (sty_0dc600e1). Reserved so it is
-// never treated as an area; its default is substrate/config/sync.toml.
-const syncRecentWindowKey = "recent_window"
-
 // syncPullOnlyKey is the [sync] switch that makes this machine pull from its
 // bound project and never push to it (sty_07eefabe). It is machine state: only
 // PullOnly reads it, from satelle.local.toml alone. Reserved so it is never
@@ -169,66 +179,14 @@ var WorkstateAreas = []string{"stories", "executions", "ledger"}
 // be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
 	syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
-	syncStaleAfterKey: true, syncHoldUnpushedKey: true, syncRecentWindowKey: true, syncPullOnlyKey: true,
-}
-
-const syncDefaultsFile = "substrate/config/sync.toml"
-
-var (
-	embeddedSyncOnce sync.Once
-	embeddedSync     SyncTable
-	embeddedSyncErr  error
-)
-
-// EmbeddedSync returns the embedded default [sync] keys, parsed once; empty on a
-// parse failure, which EmbeddedSyncErr reports.
-func EmbeddedSync() SyncTable {
-	embeddedSyncOnce.Do(func() {
-		raw, err := substrateFS.ReadFile(syncDefaultsFile)
-		if err != nil {
-			embeddedSyncErr = err
-			return
-		}
-		var file struct {
-			Sync SyncTable `toml:"sync"`
-		}
-		if _, err := toml.Decode(string(raw), &file); err != nil {
-			embeddedSyncErr = err
-			return
-		}
-		embeddedSync = file.Sync
-	})
-	return embeddedSync
-}
-
-// EmbeddedSyncErr is non-nil when the embedded [sync] defaults failed to load.
-func EmbeddedSyncErr() error {
-	_ = EmbeddedSync()
-	return embeddedSyncErr
-}
-
-// RecentWindow reads [sync] recent_window, else the embedded default. An
-// unparseable or non-positive value is a config error.
-func RecentWindow(cfg Config) (time.Duration, error) {
-	raw := strings.TrimSpace(cfg.Sync[syncRecentWindowKey])
-	if raw == "" {
-		raw = strings.TrimSpace(EmbeddedSync()[syncRecentWindowKey])
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("sync: recent_window %q is not a duration: %w", raw, err)
-	}
-	if d <= 0 {
-		return 0, fmt.Errorf("sync: recent_window must be positive, got %s", d)
-	}
-	return d, nil
+	syncStaleAfterKey: true, syncHoldUnpushedKey: true, syncPullOnlyKey: true,
 }
 
 // SyncTable is the [sync] table: the connection and switch keys. Values are
 // strings; a bare TOML boolean is accepted and kept as "true"/"false" so a
 // switch reads naturally (hold_unpushed = false). Decoding merges into an
 // existing table, so the satelle.local.toml overlay wins per key. A
-// RemovedSyncScopeKeys key is refused.
+// RemovedSyncKeys key is refused.
 type SyncTable map[string]string
 
 // UnmarshalTOML implements toml.Unmarshaler.
@@ -900,8 +858,8 @@ func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, 
 // stripRepoBinding withholds the keys that bind a checkout to a hosted project
 // from a file about to leave the machine, and names what it withheld. For the
 // settings area (satelle.toml) it removes [sync] project and [hosted] project so a
-// push cannot rebind another repo, and every RemovedSyncScopeKeys key so a push
-// never carries a scope; deploy re-applies the local binding after restore (the
+// push cannot rebind another repo, and every RemovedSyncKeys key so a push
+// never carries a scope or a removed key; deploy re-applies the local binding after restore (the
 // load-bearing guard against older hosted copies that carry one). Every other
 // area — the agents layer included — passes through byte-identical:
 // machine-specific agents content is refused at push (CheckAgents), never altered.

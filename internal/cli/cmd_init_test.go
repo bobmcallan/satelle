@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1421,5 +1422,47 @@ func TestInitAllHealsSyncScopeKeysWithCurrentHooks(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "STALE") || !strings.Contains(out.String(), "1 already current") {
 		t.Errorf("a healed repo must count as current:\n%s", out.String())
+	}
+}
+
+// sty_7c01ca14 AC5: init removes [sync] recent_window from satelle.toml and
+// satelle.local.toml, keeps every other [sync] key, and leaves a config that loads.
+func TestInitRemovesRecentWindow(t *testing.T) {
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shared := "[sync]\nproject = \"probe\"\nrecent_window = \"168h\"\nstale_after = \"6h\"\n"
+	local := "[sync]\nrecent_window = \"24h\"\n"
+	if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(shared), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, config.LocalConfigName), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := config.Load(filepath.Join(dataDir, config.ConfigName)); err == nil || !strings.Contains(err.Error(), "[sync] recent_window") {
+		t.Fatalf("test premise: a config carrying recent_window must not load, got %v", err)
+	}
+	if fs := DetectScaffoldDrift(repo); !slices.ContainsFunc(fs, func(f ScaffoldFinding) bool {
+		return strings.Contains(f.Detail, "[sync] recent_window is removed")
+	}) {
+		t.Errorf("drift does not report recent_window: %v", fs)
+	}
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatalf("runInit: %v\n%s", err, out.String())
+	}
+	if found, err := config.FindSyncScopeKeys(dataDir); err != nil || len(found) != 0 {
+		t.Fatalf("init left removed keys: %v (%v)", found, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dataDir, config.ConfigName))
+	for _, keep := range []string{`project = "probe"`, `stale_after = "6h"`} {
+		if !strings.Contains(string(got), keep) {
+			t.Errorf("init dropped %q:\n%s", keep, got)
+		}
+	}
+	if _, _, err := config.Load(filepath.Join(dataDir, config.ConfigName)); err != nil {
+		t.Fatalf("the healed config does not load: %v", err)
 	}
 }

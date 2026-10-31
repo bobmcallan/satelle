@@ -306,3 +306,44 @@ func TestAreaOfRepoPath(t *testing.T) {
 		})
 	})
 }
+
+// sty_7c01ca14 AC5: [sync] recent_window is removed. A file carrying it fails to
+// load naming the key and the heal, FindSyncScopeKeys reports it, and
+// RemoveSyncScopeKeys strips it, keeping every other line.
+func TestSyncTableRefusesRecentWindow(t *testing.T) {
+	for _, file := range []string{ConfigName, LocalConfigName} {
+		t.Run(file, func(t *testing.T) {
+			dir := t.TempDir()
+			committed := "[sync]\nproject = \"p\"\n"
+			if file == ConfigName {
+				committed += "recent_window = \"168h\"\n"
+			} else if err := os.WriteFile(filepath.Join(dir, LocalConfigName), []byte("[sync]\nrecent_window = \"24h\"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, ConfigName)
+			if err := os.WriteFile(path, []byte(committed), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := Load(path)
+			if err == nil {
+				t.Fatalf("Load accepted [sync] recent_window in %s", file)
+			}
+			for _, w := range []string{"[sync] recent_window", "is removed", "satelle init", file} {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q does not name %q", err, w)
+				}
+			}
+			found, err := FindSyncScopeKeys(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(found[file], []string{RemovedRecentWindowKey}) {
+				t.Errorf("FindSyncScopeKeys = %v, want %s in %s", found, RemovedRecentWindowKey, file)
+			}
+		})
+	}
+	got, removed := RemoveSyncScopeKeys("[sync]\nproject = \"p\"\nrecent_window = \"168h\"\nstale_after = \"6h\"\n")
+	if want := "[sync]\nproject = \"p\"\nstale_after = \"6h\"\n"; got != want || !reflect.DeepEqual(removed, []string{RemovedRecentWindowKey}) {
+		t.Errorf("RemoveSyncScopeKeys = %q, %v; want %q, [recent_window]", got, removed, want)
+	}
+}

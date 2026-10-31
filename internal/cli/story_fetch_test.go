@@ -28,7 +28,7 @@ func trimmedStory(t *testing.T, f *fakeWorkstateServer, server, repo, title stri
 // server read its hosted chain, apply it, and render the folded story; a second
 // open reads nothing.
 func TestOpeningAStoryFetchesItsHistory(t *testing.T) {
-	ts, f, repo := hostedModeRepo(t)
+	ts, f, repo := hostedTeamRepo(t)
 	got := trimmedStory(t, f, ts.URL, repo, "opened by get")
 	routed := trimmedStory(t, f, ts.URL, repo, "opened by route")
 	if out, err := runRoot(t, "sync", "workstate", "snapshot"); err != nil {
@@ -83,7 +83,7 @@ func TestOpeningAStoryFetchesItsHistory(t *testing.T) {
 // sty_0dc600e1 AC2: the fetch verb satelled runs for the web story page fetches the
 // stories it names whose history is on the server, and leaves a held story alone.
 func TestSyncWorkstateFetchFetchesOnlyRemoteHistory(t *testing.T) {
-	ts, f, repo := hostedModeRepo(t)
+	ts, f, repo := hostedTeamRepo(t)
 	remote := trimmedStory(t, f, ts.URL, repo, "remote")
 	if out, err := runRoot(t, "sync", "workstate", "snapshot"); err != nil {
 		t.Fatalf("snapshot: %v\n%s", err, out)

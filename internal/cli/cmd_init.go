@@ -2112,7 +2112,7 @@ const scaffoldTomlAfterExempt = `
 # notes.local.md). Unconditional — no setting enables it; secrets stay put.
 # Team catalogs are a separate verb: 'satelle publish'. Whether .satelle process
 # is git-tracked is the operator's choice — satelle does not require it.
-# Keys: project, workspace, stale_after, hold_unpushed, recent_window. Unset
+# Keys: project, workspace, stale_after, hold_unpushed. Unset
 # server = https://satelle.dev; satelle login records the machine-wide server.
 # A machine that pulls but never pushes sets pull_only in satelle.local.toml
 # ('satelle project pull-only on').

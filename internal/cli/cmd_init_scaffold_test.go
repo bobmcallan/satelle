@@ -71,7 +71,7 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Load of uncommented scaffold example: %v\n--- body ---\n%s", err, body)
 	}
-	for _, k := range config.RemovedSyncScopeKeys {
+	for _, k := range config.RemovedSyncKeys {
 		if _, ok := cfg.Sync[k]; ok {
 			t.Errorf("the example seeds the removed [sync] key %q", k)
 		}

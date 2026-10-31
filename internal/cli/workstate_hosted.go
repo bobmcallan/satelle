@@ -2,10 +2,10 @@ package cli
 
 // Work-state in hosted mode (sty_0dc600e1): with the user signed in and the repo
 // bound, the server is the store of record. A push sends the item rows of the
-// stories this machine authored and nothing else, the local ledger keeps full
-// history only for the stories verb.HeldStories names, and every other story's
-// history is dropped once the server holds all of it. Local only, none of this
-// runs.
+// stories this machine authored and nothing else. In team scope the local ledger
+// keeps full history only for the stories verb.HeldStories names, and every other
+// story's history is dropped once the server holds all of it (sty_7c01ca14).
+// Personal scope keeps every chain; local only, none of this runs.
 
 import (
 	"context"
@@ -15,13 +15,13 @@ import (
 	"io"
 	"maps"
 	"slices"
-	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/mirror"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -130,30 +130,38 @@ func leaveRemote(ctx context.Context, a *app.App, chain *chainPull, applied []wo
 	return out, a.Store.Ledger.SetMarks(ctx, ledger.MarkHistoryRemote, remote)
 }
 
-// holdHosted narrows c, in hosted mode, to the stories whose hosted chain a pass
-// reads: those the local store holds, and those whose hosted row changed within
-// [sync] recent_window. A newer local row stands only for a story this machine
-// authored; any other is the server's to replace.
-func holdHosted(ctx context.Context, a *app.App, c *chainPull, now time.Time) error {
+// holdHosted narrows c, in hosted mode, to the rows a newer local copy may stand
+// for: only a story this machine authored keeps one; any other is the server's to
+// replace. In team scope it also narrows the hosted chains a pass reads to the
+// stories the local store holds and those whose hosted row is performing; outside
+// team scope every chain is read.
+func holdHosted(ctx context.Context, a *app.App, c *chainPull) error {
 	if !verb.HostedMode(a.Config) {
 		return nil
-	}
-	window, err := config.RecentWindow(a.Config)
-	if err != nil {
-		return err
-	}
-	held, err := verb.HeldStories(ctx, a.Store.Ledger, "", window, now)
-	if err != nil {
-		return err
 	}
 	authored, err := a.Store.Ledger.Marked(ctx, ledger.MarkItemPending)
 	if err != nil {
 		return err
 	}
-	since := now.Add(-window)
-	c.held = func(it workitem.Item) bool { return held[it.ID] || it.UpdatedAt.After(since) }
 	c.authored = authored
+	if !teamScope(a) {
+		return nil
+	}
+	held, err := verb.HeldStories(ctx, a.Store.Ledger, a.Store.Stories)
+	if err != nil {
+		return err
+	}
+	performing := verb.StoryPerforming(ctx)
+	c.held = func(it workitem.Item) bool { return held[it.ID] || performing(it) }
 	return nil
+}
+
+// teamScope reports whether the repo's recorded sync scope is team: the only
+// scope whose local store trims story history (sty_7c01ca14). It reads the scope
+// the sync pass already resolved (syncstate.RecordedScope) and makes no hosted
+// call; no record, or one for another binding, is local and trims nothing.
+func teamScope(a *app.App) bool {
+	return syncstate.RecordedScope(config.GlobalDir(), a.RepoRoot, a.Config.SyncProject()) == config.TeamScope
 }
 
 // hostedIdentity is the hosted block of the mirror identity: nil unless in hosted
@@ -177,22 +185,13 @@ func hostedIdentity(ctx context.Context, a *app.App) *mirror.HostedMeta {
 	return &mirror.HostedMeta{Server: config.ResolveHostedServer(a.Config), Project: project, MachineStories: ids}
 }
 
-// heldStories is verb.HeldStories under the repo's [sync] recent_window.
-func heldStories(ctx context.Context, a *app.App, now time.Time) (map[string]bool, error) {
-	window, err := config.RecentWindow(a.Config)
-	if err != nil {
-		return nil, err
-	}
-	return verb.HeldStories(ctx, a.Store.Ledger, "", window, now)
-}
-
-// trimHostedHistory drops, in hosted mode, the history of every story the local
-// store need not hold and the server holds all of. It is a no-op otherwise.
-func trimHostedHistory(ctx context.Context, a *app.App, server, project string, now time.Time) (int, error) {
-	if !verb.HostedMode(a.Config) {
+// trimHostedHistory drops, in hosted team scope, the history of every story the
+// local store need not hold and the server holds all of. It is a no-op otherwise.
+func trimHostedHistory(ctx context.Context, a *app.App, server, project string) (int, error) {
+	if !verb.HostedMode(a.Config) || !teamScope(a) {
 		return 0, nil
 	}
-	held, err := heldStories(ctx, a, now)
+	held, err := verb.HeldStories(ctx, a.Store.Ledger, a.Store.Stories)
 	if err != nil {
 		return 0, err
 	}

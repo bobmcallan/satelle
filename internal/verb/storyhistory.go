@@ -1,20 +1,23 @@
 package verb
 
-// Hosted mode and the local history cache (sty_0dc600e1). When the user is signed
-// in and the repo bound, the server is the store of record and the local ledger is
-// a cache: it holds full history only for the stories this machine engaged and the
-// ones that changed within [sync] recent_window. Every other story keeps its row,
-// and its history is fetched again when it is opened. Local only, nothing here
-// runs and the full store stays.
+// Hosted mode and the local history cache (sty_0dc600e1, sty_7c01ca14). When the
+// user is signed in and the repo bound, the server is the store of record. In team
+// scope the local ledger is a cache: it holds a story's full history while the
+// story is in a performing state of its governing route, whichever location works
+// it. Every other story keeps its row, and its history is fetched again when it is
+// opened. Personal and local scope keep every chain; nothing here trims them.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // RepoBound is config.RepoBound: the repo names its hosted project explicitly.
@@ -51,21 +54,49 @@ func MachineSet(ctx context.Context, led *ledger.Store, location string) (map[st
 	return out, err
 }
 
-// HeldStories returns the stories whose full history the local store keeps in
-// hosted mode: the machine set plus every story whose newest event was made
-// after now - window.
-func HeldStories(ctx context.Context, led *ledger.Store, location string, window time.Duration, now time.Time) (map[string]bool, error) {
-	held, err := MachineSet(ctx, led, location)
+// StoryPerforming returns the predicate that reports whether a story's folded
+// status is a performing state — a non-terminal engaging state — of its governing
+// route (wfgovern.ClockFor, the one owner of that rule). The workflows are read
+// once. A story whose governance cannot be resolved counts as performing, so the
+// store keeps its history rather than guessing.
+func StoryPerforming(ctx context.Context) func(workitem.Item) bool {
+	var wfs []docindex.Doc
+	idx, err := requireDocIndex()
+	if err == nil {
+		wfs, err = idx.List(ctx, "workflows")
+	}
+	if err != nil {
+		return func(workitem.Item) bool { return true }
+	}
+	return func(it workitem.Item) bool {
+		clk, ok := wfgovern.ClockFor(wfs, it)
+		return !ok || clk.Engaging(it.Status)
+	}
+}
+
+// HeldStories returns the stories whose full history a team-scope local store
+// keeps: every story with events whose folded row is performing (StoryPerforming),
+// whichever location engaged it. A chain with no row is held too.
+func HeldStories(ctx context.Context, led *ledger.Store, stories *workitem.Store) (map[string]bool, error) {
+	if led == nil || stories == nil {
+		return nil, fmt.Errorf("verb: held stories needs a ledger and a story store")
+	}
+	ids, err := led.StoryIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
-	latest, err := led.LatestEventTimes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	since := now.Add(-window)
-	for id, at := range latest {
-		if at.After(since) {
+	performing := StoryPerforming(ctx)
+	held := map[string]bool{}
+	for _, id := range ids {
+		it, err := stories.Get(ctx, id)
+		if errors.Is(err, workitem.ErrNotFound) {
+			held[id] = true
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if performing(it) {
 			held[id] = true
 		}
 	}
