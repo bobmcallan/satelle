@@ -81,6 +81,10 @@ type AgentLayers struct {
 	// (sty_8dedc0a4): the team owns agents.toml and the tier is present, so the
 	// repo's agents.toml and the workspace layer are not read. Empty otherwise.
 	ProjectTier string
+	// RepoRoot is the repo the layers were loaded for — the data dir's parent —
+	// so a finding about one layer can name the repo it lives in. Empty for
+	// layers built in memory.
+	RepoRoot string
 }
 
 // LoadAgentLayers is the ONE reader of the authored agents layers: every surface
@@ -93,7 +97,7 @@ type AgentLayers struct {
 // written only in the repo's copy or in agents.workspace.toml cannot govern.
 // agents.local.toml stays on top either way.
 func LoadAgentLayers(dataDir string) (AgentLayers, error) {
-	var l AgentLayers
+	l := AgentLayers{RepoRoot: filepath.Dir(dataDir)}
 	if path, ok := ProjectTierAgentsPath(dataDir); ok {
 		l.ProjectTier = path
 		l.Repo, l.RepoErr = loadAgentsFile(path)

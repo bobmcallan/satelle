@@ -1,3 +1,16 @@
+## [0.0.813] - 2026-10-31
+
+### Fixed
+- Engaging a story is no longer refused by a performer-seat allocation problem on a workflow lane the story never walks. The engage check now validates only the route that governs the story (the category's own `done.toml` table, else `*`), so a substrate story still engages and closes while the `*` lane's planner or coder has no context channel; a story governed by `*` is still refused, binding-level checks still run for every story, and `satelle doctor` and `satelle agent validate` still check every route. (sty_259572f6)
+
+### Added
+- `satelle doctor` and `satelle agent validate` warn when a repo's `agents.local.toml` (or workspace layer) restates a seat's `tools` in another adapter's tool names than the adapter its profile resolves to, e.g. pi's `read,grep` on a seat now running the Claude CLI. The warning names the repo, the layer file, the seat, both adapters and the mismatched names; the heal is to restate the tools in the resolved adapter's names or drop the override. (sty_259572f6)
+
+## [serve-v0.0.252] - 2026-10-31
+
+### Changed
+- The service binary carries the per-adapter tool vocabulary and the layered agents loader's repo root used by the foreign-tool-name warning. (sty_259572f6)
+
 ## [0.0.812] - 2026-10-31
 
 ### Fixed
