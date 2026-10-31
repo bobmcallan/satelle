@@ -65,3 +65,66 @@ func vocabularyOf(adapter string) ([]string, bool) {
 	}
 	return nil, false
 }
+
+// toolCounterparts pairs the known adapters' built-ins that do the same job,
+// keyed by adapter (sty_f7f80c48). A name no row carries for the target adapter
+// has no counterpart there, and TranslateTools never guesses one.
+var toolCounterparts = []map[string]string{
+	{HarnessClaude: "Read", HarnessPi: "read"},
+	{HarnessClaude: "Bash", HarnessPi: "bash"},
+	{HarnessClaude: "Edit", HarnessPi: "edit"},
+	{HarnessClaude: "Write", HarnessPi: "write"},
+	{HarnessClaude: "Grep", HarnessPi: "grep"},
+	{HarnessClaude: "Glob", HarnessPi: "find"},
+	{HarnessClaude: "LS", HarnessPi: "ls"},
+}
+
+// TranslateTools restates grant, written in adapter from's tool names, in
+// adapter to's: pi's `find` becomes Claude's `Glob`. A wildcard, a scoped
+// pattern, a name already in to's vocabulary and a name in neither vocabulary
+// pass through as written. A name of from's with no counterpart in to's
+// vocabulary also stays as written, at its place in out, and is listed in
+// unmapped. A name repeated by the translation is kept once.
+func TranslateTools(from, to, grant string) (out, unmapped []string) {
+	fromTools, _ := vocabularyOf(from)
+	toTools, _ := vocabularyOf(to)
+	for _, t := range parseGrant(grant) {
+		name := t.Name
+		if !t.Scoped && name != "*" && !slices.Contains(toTools, name) && slices.Contains(fromTools, name) {
+			if pair, ok := counterpart(from, to, name); ok {
+				name = pair
+			} else {
+				unmapped = append(unmapped, name)
+			}
+		}
+		if !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out, unmapped
+}
+
+func counterpart(from, to, name string) (string, bool) {
+	for _, row := range toolCounterparts {
+		if row[from] == name && row[to] != "" {
+			return row[to], true
+		}
+	}
+	return "", false
+}
+
+// SameTools reports whether two grants name the same tools, ignoring order,
+// separators and repeats.
+func SameTools(a, b string) bool {
+	set := func(g string) []string {
+		var out []string
+		for _, t := range parseGrant(g) {
+			if !slices.Contains(out, t.Name) {
+				out = append(out, t.Name)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	return slices.Equal(set(a), set(b))
+}

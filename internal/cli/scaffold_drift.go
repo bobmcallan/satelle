@@ -55,6 +55,7 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 	findings = append(findings, driftPiExtension(repoRoot)...)
 	findings = append(findings, driftCursorHooks(repoRoot)...)
 	findings = append(findings, driftSyncScopeKeys(repoRoot)...)
+	findings = append(findings, driftForeignSeatTools(repoRoot)...)
 	// Legacy per-harness scripts on disk are drift (should have been retired).
 	for _, harness := range []string{"claude", "grok", "kimi"} {
 		for _, sub := range []string{"gate", "commitgate"} {

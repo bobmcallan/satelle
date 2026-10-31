@@ -386,6 +386,11 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 		if rerr != nil {
 			return fmt.Errorf("init: remove retired [sync] keys: %w", rerr)
 		}
+		// Also on raw bytes, before anything validates: a seat whose machine
+		// layer names another adapter's tools fails node.alloc (sty_f7f80c48).
+		if ferr := repairForeignSeatTools(out, repoRoot, dataDir); ferr != nil {
+			return fmt.Errorf("init: restate foreign seat tools: %w", ferr)
+		}
 		hostedChanged, herr := healHostedBinding(dataDir)
 		if herr != nil {
 			return fmt.Errorf("init: fold [hosted] into [sync]: %w", herr)

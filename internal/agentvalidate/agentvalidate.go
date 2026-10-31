@@ -290,12 +290,41 @@ func foreignLayerTools(layers config.AgentLayers, eff config.AgentsConfig) []hea
 		repo = "this repo"
 	}
 	var out []health.Finding
+	for _, s := range ForeignLayerSeats(layers, eff) {
+		file := config.DefaultDataDir + "/" + s.Rel
+		out = append(out, health.Warn(health.IDAgentsBinding, "Tools named for another adapter", fmt.Sprintf(
+			"repo %s: %s [%s] restates tools in %s's names (%s), but the seat resolves to the %s adapter, which offers no such tools",
+			repo, file, s.Seat, s.Owner, strings.Join(s.Names, ","), s.Adapter)).
+			About(s.Seat).
+			WithRemediation(fmt.Sprintf("restate [%s] tools in %s in the %s adapter's names, or drop the override so the profile's grant applies",
+				s.Seat, file, s.Adapter)))
+	}
+	return out
+}
+
+// ForeignSeat is one seat a machine layer grants tools in another adapter's
+// names than the adapter the seat resolves to.
+type ForeignSeat struct {
+	Rel     string   // the layer file, data-dir-relative (config.LocalAgentsRel or config.WorkspaceAgentsRel)
+	Seat    string   // the seat, which is also its table in the layer file
+	Owner   string   // the adapter the foreign names belong to
+	Adapter string   // the adapter the seat resolves to
+	Names   []string // the foreign names
+	Tools   string   // the layer's tools value as written
+}
+
+// ForeignLayerSeats is the ONE walk over the machine layers for seats whose
+// tools are named for another adapter (sty_259572f6): doctor's finding and
+// init's repair (sty_f7f80c48) both read it. eff is the resolved agents layer
+// that names each seat's adapter. Seats come layer by layer, sorted.
+func ForeignLayerSeats(layers config.AgentLayers, eff config.AgentsConfig) []ForeignSeat {
+	var out []ForeignSeat
 	for _, layer := range []struct {
-		file   string
+		rel    string
 		agents config.AgentsConfig
 	}{
-		{config.DefaultDataDir + "/" + config.LocalAgentsRel, layers.Local},
-		{config.DefaultDataDir + "/" + config.WorkspaceAgentsRel, layers.Workspace},
+		{config.LocalAgentsRel, layers.Local},
+		{config.WorkspaceAgentsRel, layers.Workspace},
 	} {
 		seats := map[string]config.AgentBinding{"executor": layer.agents.Executor, "reviewer": layer.agents.Reviewer}
 		for n, b := range layer.agents.Agents {
@@ -306,29 +335,28 @@ func foreignLayerTools(layers config.AgentLayers, eff config.AgentsConfig) []hea
 			if tools == "" {
 				continue
 			}
-			var b config.AgentBinding
-			switch seat {
-			case "executor":
-				b = eff.ExecutorBinding()
-			case "reviewer":
-				b = eff.ReviewerBinding()
-			default:
-				b, _ = eff.NamedBinding(seat)
-			}
-			adapter := agentcli.AdapterName(b.CommandTemplate())
+			adapter := agentcli.AdapterName(SeatBinding(eff, seat).CommandTemplate())
 			owner, names := agentcli.ForeignToolNames(adapter, tools)
 			if len(names) == 0 {
 				continue
 			}
-			out = append(out, health.Warn(health.IDAgentsBinding, "Tools named for another adapter", fmt.Sprintf(
-				"repo %s: %s [%s] restates tools in %s's names (%s), but the seat resolves to the %s adapter, which offers no such tools",
-				repo, layer.file, seat, owner, strings.Join(names, ","), adapter)).
-				About(seat).
-				WithRemediation(fmt.Sprintf("restate [%s] tools in %s in the %s adapter's names, or drop the override so the profile's grant applies",
-					seat, layer.file, adapter)))
+			out = append(out, ForeignSeat{Rel: layer.rel, Seat: seat, Owner: owner, Adapter: adapter, Names: names, Tools: tools})
 		}
 	}
 	return out
+}
+
+// SeatBinding is the resolved binding of a seat by name: the executor and
+// reviewer seats, or a named seat (the zero binding when there is none).
+func SeatBinding(eff config.AgentsConfig, seat string) config.AgentBinding {
+	switch seat {
+	case "executor":
+		return eff.ExecutorBinding()
+	case "reviewer":
+		return eff.ReviewerBinding()
+	}
+	b, _ := eff.NamedBinding(seat)
+	return b
 }
 
 // sameRoleFinding is an advisory, never a refusal: when the executor seat and the

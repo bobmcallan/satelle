@@ -1,3 +1,13 @@
+## [0.0.819] - 2026-11-01
+
+### Fixed
+- `satelle init`, and `satelle init --all --yes` for every registered repo, repairs a seat whose `agents.local.toml` or `agents.workspace.toml` restates its tools in another adapter's names than the one its profile resolves to (for example pi's `read,grep,find,ls` under a Claude profile, which left the seat with no context channel and failed `node.alloc`). It drops the line when the profile already grants the same tools, and otherwise restates each tool in the resolved adapter's names. Every other line, comment included, stays as written. A tool with no counterpart there is left unchanged and reported with the repo, file, seat and name. The `init --all` dry run lists each rewrite before `--yes` applies it. (sty_f7f80c48)
+
+## [serve-v0.0.257] - 2026-11-01
+
+### Changed
+- The service binary carries the shared adapter tool vocabulary that init's foreign-tool repair and doctor's agents.binding warning read. (sty_f7f80c48)
+
 ## [0.0.818] - 2026-10-31
 
 ### Fixed

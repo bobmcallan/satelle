@@ -18,8 +18,10 @@ func stampRefused(out string) bool {
 }
 
 // TestInitRestampsDespiteUnrelatedValidationFailure (sty_7ef14c27 AC1, AC2): a
-// repo whose agents.local.toml carries pi-named tools for the * lane's seats (a
-// node.alloc problem no migration touches) sits behind an init-heals release.
+// repo whose agents.local.toml grants the * lane's seats Claude-named tools with
+// no context channel (a node.alloc problem no migration touches, and not one
+// init's foreign-tool repair rewrites, sty_f7f80c48) sits behind an init-heals
+// release.
 // init applies the migrations, re-stamps and still fails on the node.alloc
 // finding — and the stamp stays current, so the store-backed commands run and the
 // substrate story that fixes the problem engages, while the * lane is refused for
@@ -38,6 +40,8 @@ func TestInitRestampsDespiteUnrelatedValidationFailure(t *testing.T) {
 			mustRunEnv(t, testBin, repo, env, "init")
 			binVer := readStamp(t, repo)
 			brokenWildcardLane(t, repo)
+			writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.local.toml"),
+				"[planner]\nrole = \"agent\"\ntools = \"Grep,Glob,LS\"\n\n[coder]\nrole = \"agent\"\ntools = \"Edit,Write\"\n")
 			mustRunEnv(t, testBin, repo, env, "substrate", "edit", "skills", "satelle-substrate-only-check")
 			stubReviewerAccept(t, repo)
 			mustRunEnv(t, testBin, repo, env, "reindex")
