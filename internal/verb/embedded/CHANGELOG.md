@@ -1,3 +1,14 @@
+## [0.0.822] - 2026-11-01
+
+### Changed
+- The session-resident `satelle-agent-goals` principle states that a block is never worked around. When a gate, a hook deny, the edit gate, the cross-repo fence or a harness refusal blocks an action, the agent does not do the blocked work another way, and does not hand the user a command that does it. It raises the work as a story in the repo the work belongs to, in the category whose route fits. When no category or workflow fits, it proposes one and creates it only with the user's approval. `satelle init` heals the seeded copy. A create-rubric review-corpus pair covers the rule. To keep every session principle inline under the harness limit, rules that restated another session principle or help topic were cut: the edits-require-a-story "Follow the workflow" paragraph (agent-goals already says it), the agent-goals examples of what is not proof of done, its second statement that a gate needs a reviewer accept, and the clauses on a workflow with no blocked state and on why a supersedes tag is used. (sty_902140d6)
+- The substrate-lock refusal with no engaged substrate story no longer tells the agent to ask the developer to repair the substrate outside the agent session. It now says to raise a story whose category route can take the path, or to propose such a category to the developer and create it only with their approval. (sty_902140d6)
+
+## [serve-v0.0.260] - 2026-11-01
+
+### Changed
+- The service binary carries the revised session principles and substrate-lock refusal text. (sty_902140d6)
+
 ## [0.0.821] - 2026-11-01
 
 ### Fixed

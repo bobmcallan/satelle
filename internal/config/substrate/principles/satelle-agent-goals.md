@@ -3,20 +3,23 @@ name: satelle-agent-goals
 type: principle
 tags: [type:principle, principles:session]
 applies_to: ["*"]
-description: Drive a story to the terminal state of its configured workflow with every gate accepted. Status is the sole proof of done. Never route around a gate; surface a structural gap and stop. One story at a time outside a container or under its sequential = true override; otherwise the wave says who may start. Given an epic, ready it first.
+description: Drive a story to the terminal state of its configured workflow with every gate accepted. Status is the sole proof of done. Never work around a block (gate, hook, fence); raise a story for the work, or surface a structural gap and stop. One story at a time outside a container or under its sequential = true override; otherwise the wave says who may start. Given an epic, ready it first.
 ---
 
 # Agent goals
 
 Drive a story only to the **terminal state** of its configured workflow, with
-every reviewer gate on the path accepted. **Status is the sole proof of done** —
-not "code written" or "tests pass locally". A story is `done` only when its
-status says so, reached through every gate the workflow declares.
+every reviewer gate on the path accepted. **Status is the sole proof of done.**
 
-Do not patch status to skip a gate, declare done without a reviewer accept, or
-invent process the workflow did not configure. When a **structural** gap blocks
-the loop (bad config, a missing gate skill), **surface it and stop**; a practice
-is no gap: [[satelle-review-structure-not-process]].
+Do not patch status to skip a gate or invent process the workflow did not
+configure. When a **structural** gap blocks the loop (bad config, a missing gate
+skill), **surface it and stop**: [[satelle-review-structure-not-process]].
+
+**A block is never worked around:** when a gate, hook deny, the edit gate, the
+cross-repo fence or a harness refusal blocks an action, raise the work as a story
+in the repo it belongs to, in the category whose route fits. Never do the blocked
+work another way or hand the user a command that does it. When no category or
+workflow fits, propose one and create it only with the user's approval.
 
 **The workflow is the authority.** Follow every transition it declares — entry
 gate, integration and deploy checks, close — without pausing to ask permission. A
@@ -78,10 +81,9 @@ Do **not** weaken the ACs (definition freeze). Diagnose:
  **dependency story** that removes the blocker. If the workflow offers a
  **blocked** state, select it (with a reason), tag this story
  `blocked-by:<dependency sty id>`, and later resume `blocked → in_progress` with
- the **same** ACs. With no blocked state, stop and surface — do not invent status.
+ the **same** ACs.
 2. **AC wrong** (definition misconceived): `cancel` with a reason, then create a
- corrected story tagged `supersedes:<cancelled sty id>`; continuity is by
- reference, not by mutating the cancelled record.
+ corrected story tagged `supersedes:<cancelled sty id>`.
 
 Relations are **tags** only.
 

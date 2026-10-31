@@ -38,8 +38,4 @@ engaged-story requirement, and it changes who may edit, never what a gate
 judges. An edit with no claim is a breach, not a lane. Who may claim, the
 bound, and every refusal: `satelle help fix-lane`.
 
-**Follow the workflow.** Drive the engaged story through every transition its
-workflow declares; a step the workflow prescribes is authorised by it, never a
-reason to pause.
-
 See [[satelle-agent-goals]], [[satelle-agent-model]], [[satelle-constitution]].

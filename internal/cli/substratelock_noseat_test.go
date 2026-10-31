@@ -184,11 +184,16 @@ func TestSubstrateLockNoEngagementRefusalSaysHowToProceed(t *testing.T) {
 					"engage it",
 					`--category ` + substrateLaneCategory,
 					"If the substrate itself prevents engagement",
-					"ask the developer to repair it outside the agent session",
+					"raise a story whose category route can take that path",
+					"propose one to the developer and create it only with their approval",
 				} {
 					if !strings.Contains(reason, want) {
 						t.Errorf("deny missing %q: %s", want, reason)
 					}
+				}
+				// sty_902140d6: the refusal never sends the work around satelle.
+				if strings.Contains(reason, "outside the agent session") {
+					t.Errorf("deny still directs a repair outside the agent session: %s", reason)
 				}
 			})
 		}

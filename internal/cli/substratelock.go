@@ -211,7 +211,7 @@ func laneIDs(seats []seatInfo) string {
 // store could not be opened) names the holders only.
 func substrateLockReason(outside []seatInfo, relPath string, lane lockLane, cats map[string]string, tree string) string {
 	if len(outside) == 0 {
-		escape := "If the substrate itself prevents engagement (for example an invalid .satelle/workflows/step.toml), ask the developer to repair it outside the agent session. "
+		escape := "If the substrate itself prevents engagement (for example an invalid .satelle/workflows/step.toml), raise a story whose category route can take that path; when no category can, propose one to the developer and create it only with their approval, never repair it outside satelle. "
 		if config.IsAgentsLayerPath(relPath) {
 			escape = fmt.Sprintf("If a broken agent binding refuses that story's engagement (node.alloc), file the repair with --category %s instead: its lane dispatches no planner or coder, and it may change .satelle/workflows/agents*.toml and nothing else. ", agentsRepairCategory)
 		}
