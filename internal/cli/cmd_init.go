@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -25,9 +26,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -92,21 +96,23 @@ shows what was added versus already present.`,
 	cmd.Flags().StringVar(&configArg, "config", "", "path to satelle.toml (resolves the repo root; default: walk up from CWD)")
 	cmd.Flags().BoolVar(&noWorkspace, "no-workspace", false, "skip registering this repo in the local workspace registry")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "comma-separated harness scaffolds to install (claude,grok); when empty, only existing .claude/.grok dirs are scaffolded — never PATH")
-	cmd.Flags().BoolVar(&all, "all", false, "heal EVERY registered repo whose deployed scaffolding is stale (dry-run; --yes applies)")
+	cmd.Flags().BoolVar(&all, "all", false, "heal EVERY registered repo whose deployed scaffolding or deployed.version stamp is stale (dry-run; --yes applies)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "with --all: apply the heal (default is dry-run)")
 	register(cmd)
 }
 
-// runInitAll heals every registered repo whose deployed harness scaffolding is
-// stale — the chore an upgrade creates and nothing previously offered to do
-// (sty_0f471251). Upgrading the binary invalidates the scaffolding every other
-// repo deployed, and healing them by hand is N × (cd + satelle init), which is
-// exactly the chore an operator defers.
+// runInitAll heals every registered repo whose deployed harness scaffolding or
+// deployed.version stamp is stale — the chore an upgrade creates and nothing
+// previously offered to do (sty_0f471251). Upgrading the binary invalidates the
+// scaffolding every other repo deployed and leaves each repo's stamp behind it,
+// which refuses that repo's commands once the gap crosses an init-heals breaking
+// release (sty_2e629e93); healing them by hand is N × (cd + satelle init), which
+// is exactly the chore an operator defers.
 //
 // Dry-run by default, --yes applies: the same convention `satelle migrate`
 // already established, deliberately not a second flag shape. The dry run opens
-// NO store and writes no byte — DetectScaffoldDrift is pure filesystem, so a
-// dry run cannot materialise a runtime plane for a repo it is only reporting on
+// NO store and writes no byte — DetectScaffoldDrift and the stamp read are pure
+// filesystem, so a dry run cannot materialise a runtime plane for a repo it is only reporting on
 // (sty_20a7824c).
 //
 // A registry path that no longer resolves is REPORTED and skipped, never fatal:
@@ -124,6 +130,7 @@ func runInitAll(out io.Writer, apply bool, forcedHarness []string) error {
 		return nil
 	}
 
+	binVer := strings.TrimSpace(buildinfo.Resolve().Version)
 	var stale, clean, skipped, healed, failed int
 	for _, root := range roots {
 		root = strings.TrimSpace(root)
@@ -136,12 +143,25 @@ func runInitAll(out io.Writer, apply bool, forcedHarness []string) error {
 			continue
 		}
 		findings := DetectScaffoldDrift(root)
-		if len(findings) == 0 {
+		var why []string
+		if len(findings) > 0 {
+			why = append(why, fmt.Sprintf("%d item(s)", len(findings)))
+		}
+		if dataDir := filepath.Join(root, config.DefaultDataDir); dirExists(dataDir) {
+			if deployed := readDeployedVersion(dataDir); stampBehind(deployed, binVer) {
+				shown := deployed
+				if shown == "" {
+					shown = "(none)"
+				}
+				why = append(why, fmt.Sprintf("stamp %s behind binary %s (%s)", shown, binVer, stampGap(deployed, binVer)))
+			}
+		}
+		if len(why) == 0 {
 			clean++
 			continue
 		}
 		stale++
-		fmt.Fprintf(out, "  STALE   %s — %d item(s)\n", root, len(findings))
+		fmt.Fprintf(out, "  STALE   %s — %s\n", root, strings.Join(why, "; "))
 		for _, f := range findings {
 			fmt.Fprintf(out, "            %s [%s]: %s\n", f.Path, f.Kind, f.Detail)
 		}
@@ -151,12 +171,17 @@ func runInitAll(out io.Writer, apply bool, forcedHarness []string) error {
 		// runInit is idempotent over AUTHORED substrate — it seeds only absent
 		// files — so healing deploys canonical scaffolding without touching
 		// anything the operator wrote.
-		if ierr := runInit(io.Discard, root, false, forcedHarness); ierr != nil {
+		unpushed, ierr := runInitReport(io.Discard, root, false, forcedHarness)
+		if ierr != nil {
 			fmt.Fprintf(out, "  FAILED  %s — %v\n", root, ierr)
 			failed++
 			continue
 		}
-		fmt.Fprintf(out, "  HEALED  %s\n", root)
+		if len(unpushed) > 0 {
+			fmt.Fprintf(out, "  HEALED  %s (push failed: %s)\n", root, strings.Join(unpushed, ", "))
+		} else {
+			fmt.Fprintf(out, "  HEALED  %s\n", root)
+		}
 		healed++
 	}
 
@@ -224,16 +249,99 @@ func initRepoRoot(configArg string) string {
 // under no store-backed command and `init --all` targets other repos, so the
 // row goes to the ledger opened here, never the wired one.
 func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []string) error {
+	_, err := runInitReport(out, repoRoot, noWorkspace, forcedHarness)
+	return err
+}
+
+// runInitReport is runInit returning, beside its error, the synced areas the run
+// changed but could not publish: the heal succeeded and its push did not, which
+// `init --all` reports per repo and never counts as a failed heal.
+func runInitReport(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []string) ([]string, error) {
 	before := initSubstrateHashes(repoRoot)
 	err := runInitBody(out, repoRoot, noWorkspace, forcedHarness)
 	changed := verb.SeededChanges(before, initSubstrateHashes(repoRoot))
-	if len(changed) == 0 {
+	if len(changed) > 0 {
+		if rerr := recordInitSeed(repoRoot, changed); rerr != nil {
+			return nil, errors.Join(err, fmt.Errorf("init: record substrate written: %w", rerr))
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return publishInitChanges(out, repoRoot, changed), nil
+}
+
+// publishInitChanges pushes the synced areas init just changed, so a heal
+// reaches the hosted copy instead of leaving every healed repo unpushed
+// (satelle-sync-architecture rule 3). It pushes nothing when the run changed no
+// area sync tracks or the repo binds no project. A failed push leaves init's
+// result alone: it ends init's output with one line naming the areas and the
+// command, and returns the areas.
+func publishInitChanges(out io.Writer, repoRoot string, changed []verb.SeededFile) []string {
+	cfg, _, err := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
+	if err != nil {
+		return nil
+	}
+	areas := initChangedAreas(cfg, repoRoot, changed)
+	if len(areas) == 0 || config.ResolveBoundProject(cfg, repoRoot) == "" {
+		return nil
+	}
+	if perr := initPush(out, repoRoot); perr != nil {
+		fmt.Fprintf(out, "init changed synced substrate (%s) but the push failed — run `satelle sync push`\n", strings.Join(areas, ", "))
+		return areas
+	}
+	return nil
+}
+
+// initChangedAreas names, sorted, the non-local substrate areas whose files are
+// among changed (paths relative to repoRoot), by each area's own location.
+func initChangedAreas(cfg config.Config, repoRoot string, changed []verb.SeededFile) []string {
+	synced, err := config.SubstrateAreas(cfg)
+	if err != nil || len(changed) == 0 {
+		return nil
+	}
+	var out []string
+	for _, area := range synced {
+		loc, isDir := config.ConfigAreaLocation(cfg, repoRoot, area)
+		if loc == "" {
+			continue
+		}
+		loc = filepath.Clean(loc)
+		for _, f := range changed {
+			abs := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(f.Path)))
+			if abs == loc || isDir && strings.HasPrefix(abs, loc+string(filepath.Separator)) {
+				out = append(out, area)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// initPush publishes root's substrate through `satelle sync push`, run bound to
+// root. A variable so the tests can run that command in-process.
+var initPush = func(out io.Writer, root string) error {
+	c, err := initPushCmd(root)
+	if err != nil {
 		return err
 	}
-	if rerr := recordInitSeed(repoRoot, changed); rerr != nil {
-		return errors.Join(err, fmt.Errorf("init: record substrate written: %w", rerr))
+	c.Stdout, c.Stderr = out, out
+	return c.Run()
+}
+
+// initPushCmd is this binary's own `satelle sync push` bound to root. It runs as
+// a child because only a store-backed command's pre-run binds a command to a
+// repo's store, and init (or `init --all`, over other roots) opens none.
+func initPushCmd(root string) (*exec.Cmd, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("init: locate this binary for the push: %w", err)
 	}
-	return err
+	c := exec.Command(exe, "sync", "push", "--dry-run=false")
+	c.Dir = root
+	c.Env = append(os.Environ(), "SATELLE_CONFIG="+filepath.Join(root, config.DefaultDataDir, config.ConfigName))
+	return c, nil
 }
 
 // initSubstrateHashes is the substrate under repoRoot as its own config places it.
@@ -542,6 +650,30 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 		fmt.Fprintln(out, line)
 	}
 
+	// Stamp the binary version this repo is aligned to (breaking-surface
+	// baseline) BEFORE validating, so nothing validation reports is about the
+	// stamp being replaced. The stamp still means aligned and validated: a failed
+	// validation puts the previous bytes back (or removes a new file).
+	stampPath := filepath.Join(dataDir, deployedVersionName)
+	prevStamp, prevErr := os.ReadFile(stampPath)
+	stamped, err := writeDeployedVersion(dataDir)
+	if err != nil {
+		return fmt.Errorf("init: write deployed.version: %w", err)
+	}
+	validated := false
+	defer func() {
+		if validated || !stamped {
+			return
+		}
+		if prevErr == nil {
+			_ = os.WriteFile(stampPath, prevStamp, 0o644)
+		} else {
+			_ = os.Remove(stampPath)
+		}
+	}()
+	fmt.Fprintln(out, initLine(stamped, config.DefaultDataDir+"/"+deployedVersionName))
+	clearStampRefusal(out, repoRoot, dataDir)
+
 	// 8. Validate the deployed system (sty_d0d6bb67): init ends by PROVING the
 	//    deployment green — agents layer loadable, every substrate artifact
 	//    passing its deterministic structure check, workflow set consistent. A
@@ -550,13 +682,7 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 	if verr := validateDeployment(out, dataDir); verr != nil {
 		return verr
 	}
-
-	// Stamp the binary version this repo is aligned to (breaking-surface baseline).
-	stamped, err := writeDeployedVersion(dataDir)
-	if err != nil {
-		return fmt.Errorf("init: write deployed.version: %w", err)
-	}
-	fmt.Fprintln(out, initLine(stamped, config.DefaultDataDir+"/"+deployedVersionName))
+	validated = true
 
 	// Point half-upgraded repos at the compose verb (sty_a3915840).
 	if note := cfg.LegacyRuntimeNote(repoRoot); note != "" {
@@ -568,6 +694,20 @@ func runInitBody(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness
 	fmt.Fprintln(out, "\nReady. Try: satelle status · satelle story create --title \"…\" · satelle serve")
 	fmt.Fprintln(out, advisorPrompt())
 	return nil
+}
+
+// clearStampRefusal drops a recorded push failure that was the drift gate's
+// refusal of this repo's old stamp, once the stamp matches the binary: no push
+// clears it until one succeeds, so validation would otherwise replay a refusal
+// the re-stamp just healed. A dev binary never stamps, so it clears nothing.
+func clearStampRefusal(out io.Writer, repoRoot, dataDir string) {
+	binVer := strings.TrimSpace(buildinfo.Resolve().Version)
+	if isDevVersion(binVer) || readDeployedVersion(dataDir) != binVer {
+		return
+	}
+	if err := syncstate.ClearPushReasonIf(config.GlobalDir(), repoRoot, health.IsStampRefusal); err != nil {
+		fmt.Fprintf(out, "warning: could not clear the recorded stamp refusal: %v\n", err)
+	}
 }
 
 // agentInstructionFiles returns the agent instruction files present at the repo

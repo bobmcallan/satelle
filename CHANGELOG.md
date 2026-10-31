@@ -1,3 +1,13 @@
+## [0.0.812] - 2026-10-31
+
+### Fixed
+- `satelle init --all` counts a registered repo as stale whenever its deployed stamp is below the running binary, not only when its scaffolding changed, and `--yes` heals it exactly as a per-repo `satelle init` would, including the release's init-heals migration, so no repo is left refusing store-backed commands for a breaking-release stamp. Within `satelle init` the stamp is written before validation and sync push run, so one run no longer warns about the stamp it is replacing. Re-stamping clears a recorded push failure that was the breaking-stamp refusal, and `satelle doctor`'s fix line for such a `sync.failing` now names `satelle init`. When init changes synced substrate in a repo whose sync is not local, it publishes those areas with `satelle sync push` after re-stamping; if that push fails, its output ends with one line naming the changed areas and the push command. (sty_2e629e93)
+
+## [serve-v0.0.251] - 2026-10-31
+
+### Changed
+- The service binary carries the sync-state record and health finding changes that let a stamp-refusal push failure be cleared on re-stamp and point at `satelle init`. (sty_2e629e93)
+
 ## [0.0.811] - 2026-10-30
 
 ### Added

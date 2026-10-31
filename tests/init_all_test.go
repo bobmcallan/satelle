@@ -5,6 +5,7 @@ package tests
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -258,5 +259,162 @@ func TestDoctorAllRunsFromANonSatelleDirectory(t *testing.T) {
 	}
 	if !strings.Contains(single, "satelle init") {
 		t.Errorf("the refusal must still name the remedy:\n%s", single)
+	}
+}
+
+// testBinVersion is the release version testBin reports.
+func testBinVersion(t *testing.T, e estate) string {
+	t.Helper()
+	out, err := e.run(t, t.TempDir(), "version")
+	if err != nil {
+		t.Fatalf("version: %v\n%s", err, out)
+	}
+	f := strings.Fields(out)
+	if len(f) < 2 {
+		t.Fatalf("unparseable version output: %q", out)
+	}
+	return f[1]
+}
+
+// newestNonBreakingStamp is the newest shipped release below binVer whose range
+// up to binVer crosses no ### Breaking release, read from the embedded changelog.
+func newestNonBreakingStamp(t *testing.T, e estate, binVer string) string {
+	t.Helper()
+	out, err := e.run(t, t.TempDir(), "changelog", "--json")
+	if err != nil {
+		t.Fatalf("changelog: %v\n%s", err, out)
+	}
+	var log struct {
+		Entries []struct {
+			Version  string `json:"version"`
+			Breaking bool   `json:"breaking"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(out), &log); err != nil {
+		t.Fatalf("changelog --json: %v\n%s", err, out)
+	}
+	for _, en := range log.Entries { // newest first
+		if strings.HasPrefix(en.Version, "serve-") {
+			continue // the service binary's own releases
+		}
+		if en.Version != binVer {
+			return en.Version
+		}
+		if en.Breaking {
+			break
+		}
+	}
+	t.Skipf("binary %s is itself a breaking release, so no stamp below it is non-breaking", binVer)
+	return ""
+}
+
+func readStamp(t *testing.T, repo string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(repo, ".satelle", "deployed.version"))
+	if err != nil {
+		t.Fatalf("read stamp: %v", err)
+	}
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(b)), "satelle.version:"))
+}
+
+func writeStamp(t *testing.T, repo, v string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "deployed.version"), []byte("satelle.version: "+v+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestInitAllHealsStampBehindRepos (sty_2e629e93 AC1, AC2): `init --all` judged
+// only deployed scaffolding, so after an upgrade across an init-heals breaking
+// release it reported every refusing repo "already current" and healed nothing.
+// A repo whose stamp is behind the binary is stale whether or not its
+// scaffolding changed, --yes heals it as a per-repo init would (the release's
+// init-heals migration included), and afterwards no repo refuses a store-backed
+// verb.
+func TestInitAllHealsStampBehindRepos(t *testing.T) {
+	if !isReleaseTestBin(t) {
+		t.Skip("testBin is not release-stamped (dev sentinel) — a dev binary never stamps or gates")
+	}
+	home := t.TempDir()
+	e := estate{home: home, env: append(os.Environ(), "SATELLE_HOME="+home, "SATELLE_SERVER_ENDPOINT=none")}
+	binVer := testBinVersion(t, e)
+	nonBreaking := newestNonBreakingStamp(t, e, binVer)
+
+	breaking, quiet, current := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, dir := range []string{breaking, quiet, current} {
+		if out, err := e.run(t, dir, "init"); err != nil {
+			t.Fatalf("init %s: %v\n%s", dir, err, out)
+		}
+	}
+	writeStamp(t, breaking, "0.0.1")
+	writeStamp(t, quiet, nonBreaking)
+	// The retired [sync] key 0.0.761's init-heals migration removes.
+	tomlPath := filepath.Join(breaking, ".satelle", "satelle.toml")
+	raw, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded := strings.Replace(string(raw), "[sync]\n", "[sync]\nhold_stale_after = \"1h\"\n", 1)
+	if seeded == string(raw) {
+		t.Fatal("fixture: scaffold [sync] table not found")
+	}
+	if err := os.WriteFile(tomlPath, []byte(seeded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Guard: the breaking fixture really crosses an init-heals release.
+	if out, err := e.run(t, breaking, "status"); err == nil || !strings.Contains(out, "across BREAKING") {
+		t.Fatalf("guard: a stamp of 0.0.1 must refuse status across an init-heals breaking release: err=%v\n%s", err, out)
+	}
+
+	sums := map[string]string{tomlPath: sha256File(t, tomlPath)}
+	for _, dir := range []string{breaking, quiet, current} {
+		p := filepath.Join(dir, ".satelle", "deployed.version")
+		sums[p] = sha256File(t, p)
+	}
+	dry, err := e.run(t, current, "init", "--all")
+	if err != nil {
+		t.Fatalf("init --all (dry run): %v\n%s", err, dry)
+	}
+	staleLine := func(out, repo string) string {
+		for _, ln := range strings.Split(out, "\n") {
+			if strings.Contains(ln, "STALE") && strings.Contains(ln, repo) {
+				return ln
+			}
+		}
+		return ""
+	}
+	if ln := staleLine(dry, breaking); !strings.Contains(ln, "stamp 0.0.1 behind binary "+binVer) || !strings.Contains(ln, "init heals") {
+		t.Errorf("dry run must list the repo behind a breaking release as STALE, naming the gap:\n%s", dry)
+	}
+	if ln := staleLine(dry, quiet); !strings.Contains(ln, "stamp "+nonBreaking+" behind") || !strings.Contains(ln, "no breaking release") {
+		t.Errorf("dry run must list the repo behind a non-breaking release as STALE:\n%s", dry)
+	}
+	if staleLine(dry, current) != "" || !strings.Contains(dry, "2 stale, 1 already current") {
+		t.Errorf("the current repo must count as current:\n%s", dry)
+	}
+	for p, want := range sums {
+		if sha256File(t, p) != want {
+			t.Errorf("dry run must change nothing on disk: %s changed", p)
+		}
+	}
+
+	out, err := e.run(t, current, "init", "--all", "--yes")
+	if err != nil {
+		t.Fatalf("init --all --yes: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "2 healed, 0 failed") {
+		t.Errorf("--yes must heal both stamp-behind repos:\n%s", out)
+	}
+	for _, dir := range []string{breaking, quiet, current} {
+		if got := readStamp(t, dir); got != binVer {
+			t.Errorf("%s: stamp = %s after the heal, want %s", dir, got, binVer)
+		}
+		if st, serr := e.run(t, dir, "status"); serr != nil || strings.Contains(st, "across BREAKING") {
+			t.Errorf("%s: a store-backed verb must run after the heal: err=%v\n%s", dir, serr, st)
+		}
+	}
+	if healed, _ := os.ReadFile(tomlPath); strings.Contains(string(healed), "hold_stale_after") {
+		t.Errorf("the heal must run the release's init-heals migration (retired [sync] key still present):\n%s", healed)
 	}
 }

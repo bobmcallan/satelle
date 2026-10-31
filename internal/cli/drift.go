@@ -64,6 +64,40 @@ func isDevVersion(v string) bool {
 	return strings.HasPrefix(v, "0.0.0-dev") || strings.Contains(v, "+")
 }
 
+// stampBehind reports whether a repo stamped deployed is behind binary binVer,
+// so `satelle init` has a stamp to heal: an unstamped repo is behind, as the
+// drift gate's unstamped refusal holds, and a dev binary never is — it never
+// stamps.
+func stampBehind(deployed, binVer string) bool {
+	if isDevVersion(binVer) {
+		return false
+	}
+	if strings.TrimSpace(deployed) == "" {
+		return true
+	}
+	return verb.CmpSemverExported(deployed, binVer) < 0
+}
+
+// stampGap names what lies between a stamp stampBehind judged behind and the
+// binary: the newest breaking release and whether init heals it, or none.
+func stampGap(deployed, binVer string) string {
+	if strings.TrimSpace(deployed) == "" {
+		return "unstamped"
+	}
+	entries, err := verb.ChangelogRange(deployed, binVer)
+	if err != nil {
+		return "changelog unreadable"
+	}
+	healing, manual := splitBreaking(entries)
+	switch {
+	case len(healing) > 0:
+		return "BREAKING " + healing[0].Version + ", init heals"
+	case len(manual) > 0:
+		return "BREAKING " + manual[0].Version + ", manual migration"
+	}
+	return "no breaking release"
+}
+
 // breakingWarning is the NON-refusing outcome of the drift gate: the binary is
 // ahead of this repo's stamp across ### Breaking release(s) whose migrations the
 // operator performs by hand, so `satelle init` cannot heal them (sty_6e143870).
@@ -136,7 +170,7 @@ func breakingDrift(deployed, binVer string, entries []verb.ChangelogEntry) (*bre
 		e := healing[0]
 		var b strings.Builder
 		fmt.Fprintf(&b,
-			"satelle: binary %s is ahead of this repo's deployed stamp %s across BREAKING release %s — that release says:%s",
+			"satelle: binary %s is ahead of this repo's deployed stamp %s "+health.StampRefusalMarker+" %s — that release says:%s",
 			binVer, deployed, e.Version, breakingBullets(e))
 		for _, m := range manual {
 			fmt.Fprintf(&b, "\nRelease %s also needs manual migration — it says:%s", m.Version, breakingBullets(m))
@@ -146,7 +180,7 @@ func breakingDrift(deployed, binVer string, entries []verb.ChangelogEntry) (*bre
 	case len(manual) > 0:
 		var b strings.Builder
 		fmt.Fprintf(&b,
-			"⚠️ satelle: binary %s is ahead of this repo's deployed stamp %s across BREAKING release(s) whose migrations are manual — `satelle init` does not perform them:",
+			"⚠️ satelle: binary %s is ahead of this repo's deployed stamp %s "+health.StampRefusalMarker+"(s) whose migrations are manual — `satelle init` does not perform them:",
 			binVer, deployed)
 		for _, m := range manual {
 			fmt.Fprintf(&b, "\nrelease %s says:%s", m.Version, breakingBullets(m))
@@ -194,7 +228,7 @@ func breakingFindings(deployed, binVer string, entries []verb.ChangelogEntry) he
 	healing, manual := splitBreaking(entries)
 	var out health.Findings
 	add := func(e verb.ChangelogEntry, mk func(id, title, detail string) health.Finding, title, effect, remediation string) {
-		detail := fmt.Sprintf("binary %s is ahead of deployed stamp %s across BREAKING release %s — %s; that release says: %s",
+		detail := fmt.Sprintf("binary %s is ahead of deployed stamp %s "+health.StampRefusalMarker+" %s — %s; that release says: %s",
 			binVer, deployed, e.Version, effect, strings.Join(e.Sections["Breaking"], "; "))
 		out = append(out, mk(health.IDBreakingUnacknowledged, title, detail).About(e.Version).WithRemediation(remediation))
 	}

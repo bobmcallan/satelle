@@ -129,6 +129,24 @@ func RecordPush(globalDir, repoPath string, success bool, reason, scope string, 
 	})
 }
 
+// ClearPushReasonIf drops the recorded push failure when match accepts its
+// reason, leaving the failure and success times as they were: for a failure
+// something other than a successful push has healed, such as `satelle init`
+// re-stamping past the drift gate that refused it. Nothing is written when no
+// recorded reason matches, so a repo with no state gains no file.
+func ClearPushReasonIf(globalDir, repoPath string, match func(string) bool) error {
+	s, ok, err := Load(globalDir, repoPath)
+	if err != nil || !ok || s.PushReason == "" || !match(s.PushReason) {
+		return err
+	}
+	return record(globalDir, repoPath, "", func(s *State) {
+		if s.PushReason != "" && match(s.PushReason) {
+			s.PushReason = ""
+			s.PushPasses = 0
+		}
+	})
+}
+
 // RecordSnapshot merges the snapshot-leg fields and writes atomically.
 func RecordSnapshot(globalDir, repoPath string, success bool, reason, scope string, now time.Time) error {
 	return record(globalDir, repoPath, scope, func(s *State) {

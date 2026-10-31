@@ -169,6 +169,19 @@ const (
 	IDLiveVersionDrift = "live.version_drift" // a CLI's version differs from the one satelle's measured behavior was captured against, or is unknown
 )
 
+// StampRefusalMarker is the phrase every breaking-drift message carries, where
+// the binary is ahead of a repo's deployed stamp across a ### Breaking release.
+// The drift gate composes its messages from it and the surfaces that replay a
+// recorded refusal (doctor, init) recognise it by it, so the text has one owner.
+const StampRefusalMarker = "across BREAKING release"
+
+// IsStampRefusal reports whether reason is the drift gate's refusal of a repo
+// whose deployed stamp is behind a breaking release — a failure `satelle init`
+// heals, not a retry of the command that recorded it.
+func IsStampRefusal(reason string) bool {
+	return strings.Contains(reason, StampRefusalMarker) && strings.Contains(reason, "deployed stamp")
+}
+
 // ids is the registry every constant above belongs to — the uniqueness test
 // reads it, so a copy-pasted duplicate fails the build's tests rather than
 // silently collapsing two defects into one identifier.
