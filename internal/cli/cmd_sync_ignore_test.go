@@ -100,8 +100,7 @@ func TestSyncStatusIgnoredPathThatDiffersIsInStep(t *testing.T) {
 }
 
 func TestSyncConfigPushDryRunWithholdsIgnoredPath(t *testing.T) {
-	signInTo(t, "https://example.invalid")
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/skills/keep.md", "ok\n")
 	writeRepoFile(t, repo, ".satelle/skills/drafts/wip.md", "wip\n")
 	writeRepoFile(t, repo, ".satelle/"+config.IgnoreFileName, "drafts/\n")
@@ -120,7 +119,7 @@ func TestSyncConfigPushDryRunWithholdsIgnoredPath(t *testing.T) {
 }
 
 func TestAreaFileNotesListsIgnoredPathAsWithheld(t *testing.T) {
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/skills/keep.md", "ok\n")
 	writeRepoFile(t, repo, ".satelle/skills/secret.md", "s\n")
 	dataDir := repo + "/.satelle"

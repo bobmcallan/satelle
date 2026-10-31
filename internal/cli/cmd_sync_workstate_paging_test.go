@@ -290,32 +290,22 @@ func TestWorkstateForceRunsFullPass(t *testing.T) {
 	}
 }
 
-// AC5: a token saved for other work-state areas would skip rows the current set
-// needs. Every non-local scope syncs all of them, so such a token is one an older
-// binary saved under a per-area [sync] scope.
+// AC5: a token saved for other opted-in areas would skip rows the new set needs.
 func TestWorkstateAreaChangeDiscardsToken(t *testing.T) {
-	url, f, repo := pagingEnv(t, 2)
+	_, f, repo := pagingEnv(t, 2)
 	seedChangedN(f, 3)
 	if out, err := runRoot(t, "sync", "workstate", "snapshot"); err != nil {
 		t.Fatalf("first snapshot: %v\n%s", err, out)
 	}
-	abs, err := filepath.Abs(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := hosted.LoadSnapshotToken(url, "probe", abs)
-	if err != nil || tok.Token == "" {
-		t.Fatalf("test premise: the first pass saved no token (%v): %+v", err, tok)
-	}
-	tok.Areas = "stories"
-	if err := hosted.SaveSnapshotToken(url, "probe", abs, tok); err != nil {
+	cfg := "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out, err := runRoot(t, "sync", "workstate", "snapshot")
 	if err != nil {
 		t.Fatalf("snapshot after area change: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "since-token discarded: synced work-state areas changed") || !strings.Contains(out, "full pass") {
+	if !strings.Contains(out, "since-token discarded: opted-in work-state areas changed") || !strings.Contains(out, "full pass") {
 		t.Fatalf("output = %q", out)
 	}
 	reqs := f.snapshotRequests()

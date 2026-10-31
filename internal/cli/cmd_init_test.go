@@ -334,8 +334,7 @@ func TestRunInitIdempotent(t *testing.T) {
 }
 
 // TestRunInitFoldsLeftoverHosted: collector-sdk shape — [sync] plus leftover
-// [hosted] project — becomes the simple [sync] view (sty_5eb1bb8a), and its
-// removed scope key is dropped on the way (sty_b336c2b0).
+// [hosted] project — becomes the simple [sync] view (sty_5eb1bb8a).
 func TestRunInitFoldsLeftoverHosted(t *testing.T) {
 	repo := t.TempDir()
 	if err := runInitTest(t, io.Discard, repo); err != nil {
@@ -363,11 +362,8 @@ project = "solidsafe-collector-sdk-go"
 	if strings.Contains(s, "[hosted]") {
 		t.Fatalf("init left [hosted]:\n%s", s)
 	}
-	if !strings.Contains(s, `project = "solidsafe-collector-sdk-go"`) {
+	if !strings.Contains(s, `all = "personal"`) || !strings.Contains(s, `project = "solidsafe-collector-sdk-go"`) {
 		t.Fatalf("init did not fold project onto [sync]:\n%s", s)
-	}
-	if strings.Contains(s, `all = `) {
-		t.Fatalf("init left the removed [sync] all key:\n%s", s)
 	}
 	if !strings.Contains(out.String(), "folded into [sync]") {
 		t.Errorf("init should report the fold:\n%s", out.String())
@@ -427,7 +423,7 @@ func TestInitRemovesRetiredHoldStaleAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dataDir, "satelle.toml")
-	before := "# keep me\n[sync]\nstale_after = \"24h\"\nhold_stale_after = \"30m\"\nhold_unpushed = false\n\n[review]\ngate_create = false\n"
+	before := "# keep me\n[sync]\nstale_after = \"24h\"\nhold_stale_after = \"30m\"\nstories = \"personal\"\n\n[review]\ngate_create = false\n"
 	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -439,12 +435,12 @@ func TestInitRemovesRetiredHoldStaleAfter(t *testing.T) {
 	if strings.Contains(string(got), "hold_stale_after") {
 		t.Fatalf("init left the retired key in place:\n%s", got)
 	}
-	for _, keep := range []string{"# keep me\n", "stale_after = \"24h\"\n", "hold_unpushed = false\n", "[review]\ngate_create = false\n"} {
+	for _, keep := range []string{"# keep me\n", "stale_after = \"24h\"\n", "stories = \"personal\"\n", "[review]\ngate_create = false\n"} {
 		if !strings.Contains(string(got), keep) {
 			t.Errorf("init disturbed %q:\n%s", keep, got)
 		}
 	}
-	if !strings.Contains(out.String(), "removed retired [sync] keys") {
+	if !strings.Contains(out.String(), "removed a retired [sync] key") {
 		t.Errorf("init output does not report the removal:\n%s", out.String())
 	}
 }
@@ -453,7 +449,7 @@ func TestMigrateRemovesRetiredHoldStaleAfter(t *testing.T) {
 	testutil.IsolateHome(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "satelle.toml")
-	before := "# keep me\n[sync]\nstale_after = \"24h\"\nhold_stale_after = \"30m\"\nhold_unpushed = false\n\n[review]\ngate_create = false\n"
+	before := "# keep me\n[sync]\nstale_after = \"24h\"\nhold_stale_after = \"30m\"\nstories = \"personal\"\n\n[review]\ngate_create = false\n"
 	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +466,7 @@ func TestMigrateRemovesRetiredHoldStaleAfter(t *testing.T) {
 		t.Fatalf("expected the key removed: changed=%v err=%v", changed, err)
 	}
 	got, _ := os.ReadFile(path)
-	want := "# keep me\n[sync]\nstale_after = \"24h\"\nhold_unpushed = false\n\n[review]\ngate_create = false\n"
+	want := "# keep me\n[sync]\nstale_after = \"24h\"\nstories = \"personal\"\n\n[review]\ngate_create = false\n"
 	if string(got) != want {
 		t.Fatalf("config after migrate:\n%s\nwant:\n%s", got, want)
 	}
@@ -1325,101 +1321,5 @@ func TestRunInitWorkspaceWriteFailureNonFatal(t *testing.T) {
 		if !strings.Contains(out.String(), "registration skipped") && !strings.Contains(out.String(), "workspace registry (skipped") {
 			t.Errorf("expected non-fatal workspace warning:\n%s", out.String())
 		}
-	}
-}
-
-// AC1 (sty_b336c2b0): init removes every removed [sync] scope key from
-// satelle.toml and satelle.local.toml on raw bytes, before the heals that load
-// the config, and keeps the binding and the other [sync] keys.
-func TestInitRemovesSyncAreaScopeKeys(t *testing.T) {
-	repo := t.TempDir()
-	dataDir := filepath.Join(repo, ".satelle")
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	shared := "[sync]\nall = \"personal\"\nskills = \"local\"\nproject = \"probe\"\nstale_after = \"6h\"\n\n[hosted]\nproject = \"probe\"\n"
-	local := "[sync]\ndocuments = \"local\"\n"
-	if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(shared), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, config.LocalConfigName), []byte(local), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := config.Load(filepath.Join(dataDir, config.ConfigName)); err == nil {
-		t.Fatal("test premise: a config carrying scope keys must not load")
-	}
-	var out strings.Builder
-	if err := runInitTest(t, &out, repo); err != nil {
-		t.Fatalf("runInit: %v\n%s", err, out.String())
-	}
-	found, err := config.FindSyncScopeKeys(dataDir)
-	if err != nil || len(found) != 0 {
-		t.Fatalf("init left scope keys: %v (%v)", found, err)
-	}
-	got, _ := os.ReadFile(filepath.Join(dataDir, config.ConfigName))
-	for _, keep := range []string{`project = "probe"`, `stale_after = "6h"`} {
-		if !strings.Contains(string(got), keep) {
-			t.Errorf("init dropped %q:\n%s", keep, got)
-		}
-	}
-	if strings.Contains(string(got), "[hosted]") {
-		t.Errorf("the [hosted] fold did not run after the scope keys were removed:\n%s", got)
-	}
-	cfg, _, err := config.Load(filepath.Join(dataDir, config.ConfigName))
-	if err != nil {
-		t.Fatalf("the healed config does not load: %v", err)
-	}
-	if cfg.SyncProject() != "probe" {
-		t.Errorf("[sync] project = %q, want probe", cfg.SyncProject())
-	}
-	if !strings.Contains(out.String(), "removed retired [sync] keys") {
-		t.Errorf("init output does not report the removal:\n%s", out.String())
-	}
-}
-
-// AC9 (sty_b336c2b0): init --all reaches a registered repo whose hooks are
-// current but whose config still carries a scope key, heals it, and then counts
-// it current.
-func TestInitAllHealsSyncScopeKeysWithCurrentHooks(t *testing.T) {
-	isolateUserHome(t)
-	repo := t.TempDir()
-	if err := runInit(io.Discard, repo, false, []string{"claude"}); err != nil {
-		t.Fatalf("runInit: %v", err)
-	}
-	if fs := DetectScaffoldDrift(repo); len(fs) != 0 {
-		t.Fatalf("test premise: a freshly initialised repo is current: %v", fs)
-	}
-	cfgPath := filepath.Join(repo, ".satelle", config.ConfigName)
-	b, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := strings.Replace(string(b), "[sync]\n", "[sync]\nall = \"personal\"\n", 1)
-	if legacy == string(b) {
-		t.Fatalf("test premise: the scaffold has no [sync] table:\n%s", b)
-	}
-	if err := os.WriteFile(cfgPath, []byte(legacy), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var out strings.Builder
-	if err := runInitAll(&out, true, nil); err != nil {
-		t.Fatalf("init --all --yes: %v\n%s", err, out.String())
-	}
-	for _, want := range []string{"STALE   " + repo, "[sync] all is removed", "HEALED  " + repo} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("init --all output lacks %q:\n%s", want, out.String())
-		}
-	}
-	if found, err := config.FindSyncScopeKeys(filepath.Dir(cfgPath)); err != nil || len(found) != 0 {
-		t.Errorf("init --all left scope keys: %v (%v)", found, err)
-	}
-
-	out.Reset()
-	if err := runInitAll(&out, true, nil); err != nil {
-		t.Fatalf("second init --all: %v\n%s", err, out.String())
-	}
-	if strings.Contains(out.String(), "STALE") || !strings.Contains(out.String(), "1 already current") {
-		t.Errorf("a healed repo must count as current:\n%s", out.String())
 	}
 }

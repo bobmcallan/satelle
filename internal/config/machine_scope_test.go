@@ -93,20 +93,31 @@ func TestSettingsSchemaHasNoWebPort(t *testing.T) {
 	}
 }
 
-// TestSyncBindingStaysPerRepo (sty_21a7d16d AC3): two partitions, different
-// [sync] bindings; GlobalConfig has no sync field.
-func TestSyncBindingStaysPerRepo(t *testing.T) {
+// TestSyncScopesStayPerRepo (sty_21a7d16d AC3): two partitions, different
+// [sync] tables, ScopeFor differs; GlobalConfig has no sync field.
+func TestSyncScopesStayPerRepo(t *testing.T) {
 	testutil.IsolateHome(t)
-	a, err := writeConfig(t, "[sync]\nproject = \"alpha\"\n")
+	a, err := writeConfig(t, "[sync]\nskills = \"shared\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := writeConfig(t, "[sync]\nproject = \"beta\"\n")
+	b, err := writeConfig(t, "[sync]\nskills = \"personal\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.SyncProject() != "alpha" || b.SyncProject() != "beta" {
-		t.Fatalf("bindings = %q, %q", a.SyncProject(), b.SyncProject())
+	sa, err := ScopeFor(a, "skills")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := ScopeFor(b, "skills")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sa == sb {
+		t.Fatalf("ScopeFor must differ per repo: both %v", sa)
+	}
+	if sa != SharedScope || sb != PersonalScope {
+		t.Fatalf("scopes = %v, %v", sa, sb)
 	}
 	if _, ok := reflect.TypeOf(GlobalConfig{}).FieldByName("Sync"); ok {
 		t.Fatal("GlobalConfig must not have a Sync field")

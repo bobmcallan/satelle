@@ -307,8 +307,8 @@ func TestLoadVarsOverlay(t *testing.T) {
 }
 
 // TestLoadSyncOverlay pins the same per-key merge for [sync]: a committed table
-// sets the binding for the team, and the gitignored local overlay overrides a
-// single key WITHOUT dropping the committed-only keys (sty_a2d2e057, plan
+// sets area scopes for the team, and the gitignored local overlay overrides a
+// single area WITHOUT dropping the committed-only areas (sty_a2d2e057, plan
 // addendum #1).
 func TestLoadSyncOverlay(t *testing.T) {
 	repo := t.TempDir()
@@ -316,12 +316,12 @@ func TestLoadSyncOverlay(t *testing.T) {
 	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	committed := "[sync]\nproject = \"team-proj\"\nworkspace = \"Acme\"\n"
+	committed := "[sync]\nskills = \"shared\"\ndocuments = \"personal\"\n"
 	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Overlay overrides workspace; project (committed only) must survive.
-	local := "[sync]\nworkspace = \"Solo\"\n"
+	// Overlay overrides documents; skills (committed only) must survive.
+	local := "[sync]\ndocuments = \"local\"\n"
 	if err := os.WriteFile(filepath.Join(satelleDir, LocalConfigName), []byte(local), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestLoadSyncOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"project": "team-proj", "workspace": "Solo"}
+	want := map[string]string{"skills": "shared", "documents": "local"}
 	for k, v := range want {
 		if cfg.Sync[k] != v {
 			t.Errorf("sync[%q] = %q, want %q (full: %v)", k, cfg.Sync[k], v, cfg.Sync)

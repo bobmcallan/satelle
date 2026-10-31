@@ -18,15 +18,14 @@ import (
 // (sty_ac25b787). Paths are repo-relative; no absolute machine paths.
 type ScaffoldFinding struct {
 	Path   string // repo-relative path of the drifted artifact
-	Kind   string // missing | content | command | timeout | config
+	Kind   string // missing | content | command | timeout
 	Detail string
 }
 
 // DetectScaffoldDrift compares deployed harness hook configs and
-// .satelle/hooks scripts against this binary's canonical wrappers, and reports
-// any removed [sync] scope key in .satelle/satelle.toml or satelle.local.toml —
-// both healed by satelle init. Empty when nothing needs healing. Repo-agnostic:
-// only well-known relative paths (settings, script and config names) are examined.
+// .satelle/hooks scripts against this binary's canonical wrappers. Empty when
+// no harness scaffolding is deployed or everything matches. Repo-agnostic:
+// only well-known relative paths (settings + script names) are examined.
 func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 	if strings.TrimSpace(repoRoot) == "" {
 		return nil
@@ -54,7 +53,6 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 	findings = append(findings, driftGrokHarnessFlag(repoRoot)...)
 	findings = append(findings, driftPiExtension(repoRoot)...)
 	findings = append(findings, driftCursorHooks(repoRoot)...)
-	findings = append(findings, driftSyncScopeKeys(repoRoot)...)
 	// Legacy per-harness scripts on disk are drift (should have been retired).
 	for _, harness := range []string{"claude", "grok", "kimi"} {
 		for _, sub := range []string{"gate", "commitgate"} {
@@ -69,27 +67,6 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 		}
 	}
 	return dedupeScaffoldFindings(findings)
-}
-
-// driftSyncScopeKeys reports each removed [sync] scope key the repo's config
-// files still carry: such a repo fails to load until satelle init removes it. A
-// file that cannot be read or parsed is another finding's concern.
-func driftSyncScopeKeys(repoRoot string) []ScaffoldFinding {
-	found, err := config.FindSyncScopeKeys(filepath.Join(repoRoot, config.DefaultDataDir))
-	if err != nil {
-		return nil
-	}
-	var out []ScaffoldFinding
-	for _, name := range []string{config.ConfigName, config.LocalConfigName} {
-		for _, k := range found[name] {
-			out = append(out, ScaffoldFinding{
-				Path:   config.DefaultDataDir + "/" + name,
-				Kind:   "config",
-				Detail: "[sync] " + k + " is removed — run satelle init",
-			})
-		}
-	}
-	return out
 }
 
 // driftGrokHarnessFlag reports a deployed .grok/hooks/satelle.json whose

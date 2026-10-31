@@ -1,11 +1,12 @@
 package config
 
-// Sync walks and the scope ladder — PURE CONFIG: no network, no git
-// side-effects. The scope is one value per repo, resolved from the signed-in
-// account and the repo's [sync] project binding by internal/syncscope; this
-// package only walks the areas a resolved scope moves and labels their tiers.
-// The repo holds the binding alone: per-area [sync] scope keys are refused
-// (RemovedSyncScopeKeys).
+// [sync] scope resolution — the foundation config layer for epic:scoped-sync
+// (sty_2ff2232d). This story is PURE CONFIG: no network, no git side-effects.
+// The scope ladder decides whether a .satelle area's authored files stay on
+// this machine (local, the default), sync to one operator's own machines
+// (personal), or sync to the whole team (shared). A future `satelle sync`
+// engine consumes ScopeFor/FileShared to decide what to push/pull; it is not
+// part of this story.
 
 import (
 	"fmt"
@@ -19,112 +20,63 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Scope is a position on the local -> personal -> team sync ladder: where a
-// repo's .satelle areas sync to, as resolved from the account and the binding.
+// Scope is a position on the local -> personal -> shared sync ladder for a
+// .satelle authored area.
 type Scope int
 
 const (
-	// LocalScope never leaves this machine: unsigned, unbound, or bound to a
-	// project whose team the account is not in.
+	// LocalScope never leaves this machine. The default for any area not
+	// explicitly configured — nothing syncs without opt-in.
 	LocalScope Scope = iota
-	// PersonalScope syncs to the same operator's other machines: a project of
-	// the account's personal team.
+	// PersonalScope syncs to the same operator's other machines.
 	PersonalScope
-	// TeamScope syncs to the whole team: a project of a team the account is a
-	// member of.
-	TeamScope
+	// SharedScope syncs to the whole team.
+	SharedScope
 )
 
-// String renders the scope as its recorded word.
+// String renders the scope as its [sync] config value.
 func (s Scope) String() string {
 	switch s {
 	case PersonalScope:
 		return "personal"
-	case TeamScope:
-		return "team"
+	case SharedScope:
+		return "shared"
 	default:
 		return "local"
 	}
 }
 
-// ParseScope parses a recorded scope word off the local|personal|team ladder.
-// An unrecognised value is an error rather than a silent local.
+// ParseScope parses a [sync] area value off the local|personal|shared ladder.
+// An unrecognised value is a config error (satelle's fail-fast posture) rather
+// than a silent fallback to local — a typo in an EXPLICITLY set area must not
+// go unnoticed.
 func ParseScope(s string) (Scope, error) {
 	switch s {
 	case "local":
 		return LocalScope, nil
 	case "personal":
 		return PersonalScope, nil
-	case "team":
-		return TeamScope, nil
+	case "shared":
+		return SharedScope, nil
 	default:
-		return LocalScope, fmt.Errorf("sync: unknown scope %q (want local|personal|team)", s)
+		return LocalScope, fmt.Errorf("sync: unknown scope %q (want local|personal|shared)", s)
 	}
 }
 
-// SyncAreas is the canonical, de-duplicated list of .satelle areas a sync
-// walks: the AuthoredKinds (documents/workflows/principles/skills) plus the
-// project constitution, the agents layer, tasks, settings, and the work-state
-// areas (stories, ledger, executions). Every one moves under a non-local
-// resolved scope; none is a config key.
+// SyncAreas is the canonical, de-duplicated list of .satelle area names a
+// [sync] table may configure: the AuthoredKinds (documents/workflows/
+// principles/skills) plus the remaining epic-named areas — the project
+// constitution, the agents layer, tasks, and the work-state areas (stories,
+// ledger, executions). The reserved key syncAllKey ("all") is NOT a member —
+// it only defaults areas that fall through unset (see ScopeFor).
 var SyncAreas = buildSyncAreas()
 
-// RemovedSyncScopeKeys are the [sync] keys that once set a scope per area (and
-// "all" for every area). Scope comes from the account's project binding now, so
-// loading a file carrying one fails, satelle init removes them
-// (FindSyncScopeKeys), and a settings push withholds them.
-var RemovedSyncScopeKeys = append([]string{"all"}, SyncAreas...)
-
-// syncScopeHeal is the command that removes RemovedSyncScopeKeys from a tree.
-const syncScopeHeal = "satelle init"
-
-// RemovedSyncScopeKeyError is the refusal for one removed [sync] scope key.
-func RemovedSyncScopeKeyError(key string) error {
-	return fmt.Errorf("sync: [sync] %s is removed — sync scope now comes from the account's project binding; run %q to remove it", key, syncScopeHeal)
-}
-
-func isRemovedSyncScopeKey(k string) bool {
-	for _, r := range RemovedSyncScopeKeys {
-		if r == k {
-			return true
-		}
-	}
-	return false
-}
-
-// FindSyncScopeKeys reports, per file name (ConfigName, LocalConfigName) under
-// dataDir, the RemovedSyncScopeKeys its [sync] table carries, sorted. It decodes
-// each file as plain TOML — never through Config, so the refusal cannot stop it
-// — and a missing file contributes nothing.
-func FindSyncScopeKeys(dataDir string) (map[string][]string, error) {
-	out := map[string][]string{}
-	for _, name := range []string{ConfigName, LocalConfigName} {
-		path := filepath.Join(dataDir, name)
-		b, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path, err)
-		}
-		var doc map[string]any
-		if err := toml.Unmarshal(b, &doc); err != nil {
-			return nil, &ParseError{Path: path, Err: err}
-		}
-		sync, _ := doc["sync"].(map[string]any)
-		var keys []string
-		for k := range sync {
-			if isRemovedSyncScopeKey(k) {
-				keys = append(keys, k)
-			}
-		}
-		if len(keys) > 0 {
-			sort.Strings(keys)
-			out[name] = keys
-		}
-	}
-	return out, nil
-}
+// syncAllKey is the reserved [sync] key that blanket-defaults every area not
+// explicitly set: one line — [sync] all = "personal" — opts the whole .satelle
+// tree into personal sync instead of listing each area (epic:sync-publish). It
+// is not itself a walk area (absent from SyncAreas); it only supplies the
+// fallthrough scope in ScopeFor.
+const syncAllKey = "all"
 
 // syncStaleAfterKey is the [sync] duration after which an opted-in workstate
 // partition is unbacked (sty_30696eeb). Reserved so it is never treated as an area.
@@ -138,18 +90,18 @@ const syncHoldUnpushedKey = "hold_unpushed"
 // WorkstateAreas are the [sync] areas that form the work-state kind.
 var WorkstateAreas = []string{"stories", "executions", "ledger"}
 
-// reservedSyncKeys are the [sync] connection and switch keys; they must never
-// be minted as SyncAreas.
+// reservedSyncKeys are [sync] connection keys, not area scopes. ScopeFor
+// never looks them up; they must never be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
-	syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
+	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
 	syncStaleAfterKey: true, syncHoldUnpushedKey: true,
 }
 
-// SyncTable is the [sync] table: the connection and switch keys. Values are
-// strings; a bare TOML boolean is accepted and kept as "true"/"false" so a
-// switch reads naturally (hold_unpushed = false). Decoding merges into an
-// existing table, so the satelle.local.toml overlay wins per key. A
-// RemovedSyncScopeKeys key is refused.
+// SyncTable is the [sync] table: area name -> scope, plus the reserved
+// connection and switch keys. Values are strings; a bare TOML boolean is
+// accepted and kept as "true"/"false" so a switch reads naturally
+// (hold_unpushed = false). Decoding merges into an existing table, so the
+// satelle.local.toml overlay wins per key.
 type SyncTable map[string]string
 
 // UnmarshalTOML implements toml.Unmarshaler.
@@ -160,16 +112,6 @@ func (t *SyncTable) UnmarshalTOML(data any) error {
 	}
 	if *t == nil {
 		*t = SyncTable{}
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if isRemovedSyncScopeKey(k) {
-			return RemovedSyncScopeKeyError(k)
-		}
 	}
 	for k, v := range m {
 		switch x := v.(type) {
@@ -219,10 +161,32 @@ func WorkstateStaleAfter(cfg Config) (time.Duration, bool, error) {
 func buildSyncAreas() []string {
 	out := make([]string, 0, len(AuthoredKinds)+7)
 	out = append(out, AuthoredKinds...)
-	// settings = satelle.toml, pushed less its binding and any removed scope
-	// key (stripRepoBinding). Deploy materialises whatever the manifest holds,
-	// so a wiped tree can always get its satelle.toml back.
+	// settings = satelle.toml (process config including [sync]); opted in via
+	// [sync] all / settings like every other area. Chicken-and-egg is one-way:
+	// the settings scope gates PUSH only; deploy materialises whatever the
+	// manifest holds and never consults scopes, so a wiped tree can always get
+	// its satelle.toml back.
 	return append(out, "constitution", "agents", "tasks", "settings", "stories", "ledger", "executions")
+}
+
+// ScopeFor resolves a configured area's scope. Precedence: an explicit
+// [sync] <area> value wins; else the blanket [sync] all fallthrough; else
+// LocalScope. A value outside local|personal|shared is a config error, never a
+// silent local — for the per-area key when it is set, and for all only when an
+// area actually falls through to it (a bad all beside a valid override does not
+// error the overridden area).
+func ScopeFor(cfg Config, area string) (Scope, error) {
+	if raw, ok := cfg.Sync[area]; ok && strings.TrimSpace(raw) != "" {
+		return ParseScope(raw)
+	}
+	if raw, ok := cfg.Sync[syncAllKey]; ok && strings.TrimSpace(raw) != "" {
+		scope, err := ParseScope(strings.TrimSpace(raw))
+		if err != nil {
+			return LocalScope, fmt.Errorf("sync: [sync] all = %q is not local|personal|shared", strings.TrimSpace(raw))
+		}
+		return scope, nil
+	}
+	return LocalScope, nil
 }
 
 // sharedFrontmatterKey is the OKF frontmatter key marking an individual file,
@@ -232,8 +196,9 @@ const sharedFrontmatterKey = "shared"
 // FileShared reports whether a file's frontmatter marks it shared. frontmatter
 // is the file's raw body (or just its leading `---`-fenced YAML block) — either
 // works, since only the leading fence is scanned. The flag is only meaningful
-// under a personal scope: local and team scopes apply uniformly to every file,
-// so any other scope reports false without inspecting frontmatter at all.
+// inside a personal-scope area (AC2): local and shared areas apply uniformly to
+// every file they hold, so any other scope reports false without inspecting
+// frontmatter at all.
 func FileShared(scope Scope, frontmatter string) bool {
 	if scope != PersonalScope {
 		return false
@@ -245,18 +210,25 @@ func FileShared(scope Scope, frontmatter string) bool {
 // (epic:scoped-sync, order:5): the authored kinds MINUS documents (which is its
 // own sync kind), plus the project constitution, the agents layer, and task
 // DEFINITIONS. The work-state areas (stories/ledger/executions) are order:7;
-// documents is its own kind. Under a local scope nothing is walked — this list
-// is the candidate set the walk resolves a tier for.
+// documents is its own kind. Local-scope areas are skipped at push time — this
+// list is the candidate set the walk resolves a tier for.
 var ConfigAreas = []string{"workflows", "principles", "skills", "constitution", "agents", "tasks", "settings"}
 
-// SubstrateAreas are the areas whose files a sync under scope would move to the
-// hosted copy: the config areas and documents, or none under a local scope.
+// SubstrateAreas are the areas whose files a sync would move to the hosted
+// copy: the config areas and documents, minus those whose [sync] scope is local.
 // Everything that reports on substrate continuity takes its areas here.
-func SubstrateAreas(scope Scope) []string {
-	if scope == LocalScope {
-		return nil
+func SubstrateAreas(cfg Config) ([]string, error) {
+	var out []string
+	for _, area := range append(append([]string{}, ConfigAreas...), "documents") {
+		sc, err := ScopeFor(cfg, area)
+		if err != nil {
+			return nil, err
+		}
+		if sc != LocalScope {
+			out = append(out, area)
+		}
 	}
-	return append(append([]string{}, ConfigAreas...), "documents")
+	return out, nil
 }
 
 // ConfigTier flags whether a file is eligible to be exposed via satelle publish
@@ -270,9 +242,9 @@ type ConfigTier int
 const (
 	// PersonalTier is ordinary personal-scope content (sync destination: personal).
 	PersonalTier ConfigTier = iota
-	// SharedTier marks a team scope or frontmatter shared:true. Sync still pushes
-	// to the bound project only; the CLI emits a note pointing operators at
-	// satelle publish for team catalog exposure (not dual-destination).
+	// SharedTier marks [sync] area = shared or frontmatter shared:true. Sync still
+	// pushes personal-only; the CLI emits a note pointing operators at satelle
+	// publish for team catalog exposure (not dual-destination).
 	SharedTier
 )
 
@@ -370,26 +342,26 @@ func assemble(files []ConfigFile, ign Ignore) Bundle {
 	return Bundle{Files: kept, Withheld: withheld, UneditedDefaults: defaults}
 }
 
-// ConfigFiles walks the ConfigAreas under repoRoot as a sync under scope would
-// move them. A local scope contributes nothing. Non-local files are labeled
+// ConfigFiles walks the ConfigAreas under repoRoot, resolving each file's scope
+// via ScopeFor. Local-scope areas contribute nothing. Non-local files are labeled
 // PersonalTier or SharedTier for operator messaging / publish eligibility — both
-// still sync to the bound project only (epic:sync-publish). A team scope is
-// SharedTier wholesale; a personal scope is PersonalTier per file, promoted to
-// SharedTier when FileShared (frontmatter shared:true). Reserved generated views
-// (index.md/log.md/README) are excluded — they are not authored. Paths matching
-// LocalOnlyPath are withheld (listed in Bundle.Withheld, never in Files). Files
-// are returned sorted by Path. A non-existent area on disk is benign (nothing to
-// push yet).
-func ConfigFiles(cfg Config, scope Scope, repoRoot string, ign Ignore) (Bundle, error) {
+// still sync to the personal workspace only (epic:sync-publish). A shared-scope
+// area is SharedTier wholesale; a personal-scope area is PersonalTier per file,
+// promoted to SharedTier when FileShared (frontmatter shared:true). Reserved
+// generated views (index.md/log.md/README) are excluded — they are not authored.
+// Paths matching LocalOnlyPath are withheld (listed in Bundle.Withheld, never in
+// Files). Files are returned sorted by Path. A non-existent area on disk is benign
+// (nothing to push yet). An explicitly invalid scope is a hard error.
+func ConfigFiles(cfg Config, repoRoot string, ign Ignore) (Bundle, error) {
 	var out []ConfigFile
 	for _, area := range ConfigAreas {
-		files, err := filesForArea(cfg, scope, repoRoot, area)
+		files, _, err := filesForArea(cfg, repoRoot, area)
 		if err != nil {
 			return Bundle{}, err
 		}
 		out = append(out, files...)
 	}
-	extra, err := teamExtraFiles(cfg, scope, repoRoot)
+	extra, err := teamExtraFiles(cfg, repoRoot)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -401,9 +373,13 @@ func ConfigFiles(cfg Config, scope Scope, repoRoot string, ign Ignore) (Bundle, 
 // as plain files, outside every area's snapshot.
 const TeamArea = "team"
 
-// teamExtraFiles is the push's share of the [team] files no config area owns:
-// they move with the settings area, so under any non-local scope.
-func teamExtraFiles(cfg Config, scope Scope, repoRoot string) ([]ConfigFile, error) {
+// teamExtraFiles is the push's share of the [team] files no config area owns.
+// The [team] table is settings, so they are pushed when the settings area is.
+func teamExtraFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
+	scope, err := ScopeFor(cfg, "settings")
+	if err != nil {
+		return nil, fmt.Errorf("sync area %q: %w", "settings", err)
+	}
 	if scope == LocalScope {
 		return nil, nil
 	}
@@ -411,8 +387,8 @@ func teamExtraFiles(cfg Config, scope Scope, repoRoot string) ([]ConfigFile, err
 }
 
 // TeamExtraFiles reads the [team] files no config area owns as a push would
-// bundle them, whatever the resolved scope — what a project's first publish of
-// its substrate sends whatever this machine syncs.
+// bundle them, without consulting the settings area's [sync] scope — what a
+// project's first publish of its substrate sends whatever this machine syncs.
 func TeamExtraFiles(cfg Config, repoRoot string, ign Ignore) ([]ConfigFile, error) {
 	files, err := walkTeamExtraFiles(cfg, repoRoot, PersonalScope)
 	if err != nil {
@@ -477,29 +453,39 @@ func literalGlobPrefix(g string) string {
 
 // DocumentFiles walks the documents area under repoRoot with the same scope/
 // tier labeling as ConfigFiles (local skip; SharedTier marks publish eligibility
-// only). Documents is its own sync kind (order:6) — not part of ConfigAreas.
-// Paths matching LocalOnlyPath are withheld.
-func DocumentFiles(cfg Config, scope Scope, repoRoot string, ign Ignore) (Bundle, error) {
-	files, err := filesForArea(cfg, scope, repoRoot, "documents")
+// only — sync destination remains personal). The returned Scope is the area's
+// resolved scope so the CLI can print a clear "scope=local, skipping" message
+// instead of an ambiguous empty list. Documents is its own sync kind (order:6)
+// — not part of ConfigAreas. Paths matching LocalOnlyPath are withheld.
+func DocumentFiles(cfg Config, repoRoot string, ign Ignore) (Bundle, Scope, error) {
+	files, scope, err := filesForArea(cfg, repoRoot, "documents")
 	if err != nil {
-		return Bundle{}, err
+		return Bundle{}, scope, err
 	}
-	return assemble(files, ign), nil
+	return assemble(files, ign), scope, nil
 }
 
-// filesForArea walks one named area under repoRoot with scope's tier
-// resolution. A local scope returns nil.
-func filesForArea(cfg Config, scope Scope, repoRoot, area string) ([]ConfigFile, error) {
-	if scope == LocalScope {
-		return nil, nil
+// filesForArea walks one named area under repoRoot, applying ScopeFor + tier
+// resolution. A local-scope area returns (nil, LocalScope, nil). The returned
+// Scope is always the resolved value so callers can distinguish "local, skip"
+// from "personal/shared with no files on disk yet".
+func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error) {
+	scope, err := ScopeFor(cfg, area)
+	if err != nil {
+		return nil, LocalScope, fmt.Errorf("sync area %q: %w", area, err)
 	}
-	return walkAreaFiles(cfg, repoRoot, area, scope)
+	if scope == LocalScope {
+		return nil, scope, nil
+	}
+	files, err := walkAreaFiles(cfg, repoRoot, area, scope)
+	return files, scope, err
 }
 
 // AreaFiles reads one config or documents area's files exactly as a push would
 // bundle them — same walk, same project-binding withholding, same .local
-// withholding — but whatever the resolved scope. A pull needs the local side of
-// a three-way comparison for an area whether or not this machine would push it.
+// withholding — but without
+// consulting the area's [sync] scope. A pull needs the local side of a
+// three-way comparison for an area whether or not this machine would push it.
 func AreaFiles(cfg Config, repoRoot, area string, ign Ignore) ([]ConfigFile, error) {
 	files, err := walkAreaFiles(cfg, repoRoot, area, PersonalScope)
 	if err != nil {
@@ -736,7 +722,7 @@ func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, 
 	}
 	body, withheld := stripRepoBinding(area, body)
 	tier := PersonalTier
-	if scope == TeamScope {
+	if scope == SharedScope {
 		tier = SharedTier
 	} else if scope == PersonalScope && FileShared(PersonalScope, string(body)) {
 		tier = SharedTier
@@ -747,10 +733,9 @@ func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, 
 // stripRepoBinding withholds the keys that bind a checkout to a hosted project
 // from a file about to leave the machine, and names what it withheld. For the
 // settings area (satelle.toml) it removes [sync] project and [hosted] project so a
-// push cannot rebind another repo, and every RemovedSyncScopeKeys key so a push
-// never carries a scope; deploy re-applies the local binding after restore (the
-// load-bearing guard against older hosted copies that carry one). Every other
-// area — the agents layer included — passes through byte-identical:
+// push cannot rebind another repo; deploy re-applies the local binding after
+// restore (the load-bearing guard against older hosted copies that carry one).
+// Every other area — the agents layer included — passes through byte-identical:
 // machine-specific agents content is refused at push (CheckAgents), never altered.
 func stripRepoBinding(area string, body []byte) ([]byte, []string) {
 	if area != "settings" {
@@ -764,25 +749,7 @@ func stripRepoBinding(area string, body []byte) ([]byte, []string) {
 			s = next
 		}
 	}
-	next, removed := RemoveSyncScopeKeys(s)
-	for _, k := range removed {
-		withheld = append(withheld, "[sync] "+k)
-	}
-	return []byte(next), withheld
-}
-
-// RemoveSyncScopeKeys removes every RemovedSyncScopeKeys key from a TOML
-// document's [sync] table, returning the edited text and the keys removed in
-// RemovedSyncScopeKeys order. Every other line is kept as it was.
-func RemoveSyncScopeKeys(s string) (string, []string) {
-	var removed []string
-	for _, k := range RemovedSyncScopeKeys {
-		if next := RemoveKey(s, "sync", k); next != s {
-			removed = append(removed, k)
-			s = next
-		}
-	}
-	return s, removed
+	return []byte(s), withheld
 }
 
 // sortConfigFiles orders files by server Path for a deterministic push.

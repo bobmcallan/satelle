@@ -1,7 +1,7 @@
 package cli
 
-// Under a team scope a story's attachments also go to its team workspace's
-// documents collection (sty_61872918): the only collection a team remote reads. Only the
+// A shared story's attachments also go to its team workspace's documents
+// collection (sty_61872918): the only collection a team remote reads. Only the
 // hosted server is faked, as in workstate_attachments_test.go; the personal
 // collection and the team workspace's are two separate fakeDocs.
 
@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	teamToml   = "[sync]\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n"
-	noTeamToml = "[sync]\n\n[hosted]\nproject = \"probe\"\n"
+	teamToml         = "[sync]\nstories = \"shared\"\nledger = \"local\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n"
+	teamLedgerToml   = "[sync]\nstories = \"shared\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n"
+	sharedNoTeamToml = "[sync]\nstories = \"shared\"\nledger = \"local\"\n\n[hosted]\nproject = \"probe\"\n"
+	personalTeamToml = "[sync]\nstories = \"personal\"\nledger = \"local\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n"
 
 	teamWorkspaceRoot = "/api/v1/workspaces/ws-team/documents/"
 	teamStateID       = "ws:ws-team" // the uploaded-state / cursor key of the team collection
@@ -40,11 +42,9 @@ func (d *fakeDocs) seed(path string, body []byte) {
 }
 
 // teamServer is the fake workstate server with the personal documents collection
-// and the Acme team workspace's (id ws-team). The account resolves the bound
-// project to a team it belongs to.
+// and the Acme team workspace's (id ws-team).
 func teamServer(t *testing.T) (url string, f *fakeWorkstateServer, personal, team *fakeDocs) {
 	t.Helper()
-	useScope(t, kindTeam)
 	personal, team = newFakeDocs(), newTeamDocs()
 	ts, f := newFakeWorkstateServerWith(t, func(mux *http.ServeMux, f *fakeWorkstateServer) {
 		personal.routes(mux, f)
@@ -78,13 +78,13 @@ func writePNG(t *testing.T, id string) {
 	}
 }
 
-// AC1, AC6: under a team scope with a team workspace set, every markdown
+// AC1, AC6: with stories shared and a team workspace set, every markdown
 // attachment goes byte for byte to the project collection and to the workspace
 // route, and no attachment body rides an Apply.
 func TestPushStoryAttachmentsSharedTeam(t *testing.T) {
 	const marker = "team-attachment-marker-sty_61872918"
 	url, f, personal, team := teamServer(t)
-	workstateRepo(t, teamToml)
+	workstateRepo(t, teamLedgerToml)
 	id := createStoryID(t, "shared attachments")
 	attachDoc(t, id, "change-in_progress-done", "change", "diff --git a/x.go b/x.go\n+"+marker+"\n")
 	attachDoc(t, id, "plan", "plan", "the plan")
@@ -124,13 +124,12 @@ func TestPushStoryAttachmentsSharedTeam(t *testing.T) {
 	assertNoSecretInApply(t, f, "the plan")
 }
 
-// AC2: under a personal scope, or a team scope with no team workspace set, a story
-// reaches no workspace documents route; the no-workspace case says why in one line.
+// AC2: a story that is not shared, or is shared with no team workspace, reaches no
+// workspace documents route; the shared-with-no-team case says why in one line.
 func TestPushStoryAttachmentsTeamCopySkipped(t *testing.T) {
-	t.Run("personal scope", func(t *testing.T) {
+	t.Run("stories personal", func(t *testing.T) {
 		url, _, personal, team := teamServer(t)
-		useScope(t, kindPersonal)
-		workstateRepo(t, teamToml)
+		workstateRepo(t, personalTeamToml)
 		id := createStoryID(t, "personal only")
 		attachDoc(t, id, "plan", "plan", "p")
 		out := runPush(t, url)
@@ -145,9 +144,9 @@ func TestPushStoryAttachmentsTeamCopySkipped(t *testing.T) {
 		}
 	})
 
-	t.Run("team scope without a team workspace", func(t *testing.T) {
+	t.Run("shared without a team workspace", func(t *testing.T) {
 		url, _, personal, team := teamServer(t)
-		workstateRepo(t, noTeamToml)
+		workstateRepo(t, sharedNoTeamToml)
 		id := createStoryID(t, "shared without team")
 		attachDoc(t, id, "plan", "plan", "p")
 		out := runPush(t, url)
@@ -192,8 +191,7 @@ func TestAttachmentTeamLegRules(t *testing.T) {
 
 	t.Run("held then released", func(t *testing.T) {
 		personal, team := newFakeDocs(), newTeamDocs()
-		useScope(t, kindTeam)
-		w := newHoldWorldWith(t, teamToml, func(mux *http.ServeMux, f *fakeWorkstateServer) {
+		w := newHoldWorldWith(t, teamLedgerToml, func(mux *http.ServeMux, f *fakeWorkstateServer) {
 			personal.routes(mux, f)
 			team.routes(mux, f)
 		})
@@ -314,8 +312,8 @@ func TestAttachmentTeamPull(t *testing.T) {
 	setup := func(t *testing.T) (url string, personal, team *fakeDocs, b cliMachine, id string) {
 		t.Helper()
 		url, _, personal, team = teamServer(t)
-		a := newCLIMachine(t, teamToml)
-		b = newCLIMachine(t, teamToml)
+		a := newCLIMachine(t, teamLedgerToml)
+		b = newCLIMachine(t, teamLedgerToml)
 		a.use(t)
 		id = createStoryID(t, "team pull")
 		runPush(t, url)
@@ -373,7 +371,7 @@ func TestAttachmentTeamPull(t *testing.T) {
 	})
 }
 
-// AC7: the help says a team scope also sends attachments to the team
+// AC7: the help says a shared stories scope also sends attachments to the team
 // workspace's collection.
 func TestSyncWorkstatePushHelpNamesTeamCollection(t *testing.T) {
 	for _, args := range [][]string{{"sync", "workstate", "push", "--help"}, {"sync", "workstate", "--help"}} {

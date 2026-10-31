@@ -100,7 +100,7 @@ func assertTierGoverns(t *testing.T, stage, repo, v string) {
 func TestProjectTierDeployedVersionGovernsTeamOwned(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
-	repo := agentsPushRepo(t, "[sync]\n"+boundProjectToml, tierAgents("team-v1"))
+	repo := agentsPushRepo(t, "[sync]\nall = \"personal\"\n"+boundProjectToml, tierAgents("team-v1"))
 	writeRepoFile(t, repo, ".satelle/skills/team-skill.md", tierSkill("v1"))
 	tierPush(t, ts.URL)
 	if out := tierDeploy(t, ts.URL); !strings.Contains(out, "project tier:") {
@@ -139,9 +139,7 @@ func TestProjectTierDeployedVersionGovernsTeamOwned(t *testing.T) {
 func TestProjectTierNoneForStoreWithoutTeamFiles(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
-	// Every area syncs under the resolved scope, so the team set names only paths
-	// this repo has no file under.
-	repo := syncConfigRepo(t, "[sync]\n[team]\npaths = [\"hooks/*\"]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/principles/rule.md", "team rule\n")
 	writeRepoFile(t, repo, ".satelle/skills/s.md", "tree skill\n")
 	pointAt(t, repo)
@@ -212,7 +210,7 @@ func TestProjectTierBindingsSyncStandsDown(t *testing.T) {
 func TestProjectTierTeamScriptsAndHooks(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
-	repo := agentsPushRepo(t, "[sync]\n[team]\npaths = [\"agents.toml\", \"skills/**\", \"scripts/*.sh\", \"hooks/*\"]\n"+boundProjectToml, tierAgents("team-v1"))
+	repo := agentsPushRepo(t, "[sync]\nall = \"personal\"\n[team]\npaths = [\"agents.toml\", \"skills/**\", \"scripts/*.sh\", \"hooks/*\"]\n"+boundProjectToml, tierAgents("team-v1"))
 	writeRepoFile(t, repo, ".satelle/scripts/reviewer-token.sh", "#!/bin/sh\necho team-token\n")
 	writeRepoFile(t, repo, ".satelle/hooks/pr-review-post.sh", "#!/bin/sh\necho team-post\n")
 	writeRepoFile(t, repo, ".satelle/hooks/satelle-hook.sh", "#!/bin/sh\necho init-hook\n")

@@ -5,14 +5,14 @@ package cli
 // machine's runtime stories dir, so without this leg another machine reads the
 // story and its ledger but not what the story changed. Work-state sync carries
 // them through the bound project's personal documents collection at
-// stories/<id>/<file>.md, byte for byte. Under a team scope with a team
+// stories/<id>/<file>.md, byte for byte. With [sync] stories = shared and a team
 // workspace resolved they also go to that workspace's documents collection at the
 // same path (sty_61872918), the only collection a team remote reads.
 //
 // This REVERSES sty_948ad5df's decision that change patches stay off the wire.
 // The reversal is deliberate (epic:substrate-continuity: the personal project is
 // the substrate's only off-machine home) and bounded: nothing leaves the machine
-// under a local scope; binary attachments never leave it;
+// unless [sync] stories is personal or shared; binary attachments never leave it;
 // and no attachment body ever rides the workstate items/ledger Apply — the
 // documents routes are the only way out.
 
@@ -82,29 +82,31 @@ type pendingAttachment struct {
 // workspace's collection. The ws: prefix keeps it from colliding with a project id.
 func teamStateKey(workspaceID string) string { return "ws:" + workspaceID }
 
-// teamWorkspaceID resolves the team workspace a team scope also sends
+// teamWorkspaceID resolves the team workspace a shared stories scope also sends
 // attachments to. id is "" — with one line on errw saying the team copy is
-// skipped — under a team scope with no team workspace resolved; it is "" and
-// silent under any other scope. The personal leg never depends on it.
-func teamWorkspaceID(ctx context.Context, errw io.Writer, cfg config.Config, syncScope config.Scope, client func() *hosted.Client) (name, id string) {
-	if syncScope != config.TeamScope {
+// skipped — when stories are shared but no team workspace resolves; it is "" and
+// silent when stories are not shared. The personal leg never depends on it.
+// ScopeFor cannot fail here: workstateOptIn refused an invalid scope before either
+// leg ran.
+func teamWorkspaceID(ctx context.Context, errw io.Writer, cfg config.Config, client func() *hosted.Client) (name, id string) {
+	if scope, err := config.ScopeFor(cfg, "stories"); err != nil || scope != config.SharedScope {
 		return "", ""
 	}
 	name = resolveTeamWorkspaceName(cfg, "")
 	if name == "" {
-		fmt.Fprintln(errw, "attachments: the scope is team but no team workspace is set ([hosted] workspace) — team copy skipped")
+		fmt.Fprintln(errw, "attachments: stories are shared but no team workspace is set ([hosted] workspace) — team copy skipped")
 		return "", ""
 	}
 	id, err := client().ActiveWorkspaceID(ctx, name)
 	if err != nil {
-		fmt.Fprintf(errw, "attachments: the scope is team but team workspace %q did not resolve (%v) — team copy skipped\n", name, err)
+		fmt.Fprintf(errw, "attachments: stories are shared but team workspace %q did not resolve (%v) — team copy skipped\n", name, err)
 		return "", ""
 	}
 	return name, id
 }
 
 // attachmentDest is one documents collection the push leg writes: the bound
-// project's personal collection, and — under a team scope when a team
+// project's personal collection, and — when [sync] stories is shared and a team
 // workspace resolves — the team workspace's. Both receive the same files under the
 // same rules; only the uploaded-state key and the PUT route differ.
 type attachmentDest struct {
@@ -129,7 +131,7 @@ type attachmentDest struct {
 // team remote reads only its workspace's collection. Which stories are eligible,
 // which files are binary and which stories are held is decided once; the sha skip,
 // the upload and the record are per destination.
-func pushStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, syncScope config.Scope, optIn map[string]bool, clientFor func() *hosted.Client, server, project string, scope scopeSet) {
+func pushStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, optIn map[string]bool, clientFor func() *hosted.Client, server, project string, scope scopeSet) {
 	if !optIn["stories"] {
 		return
 	}
@@ -163,7 +165,7 @@ func pushStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, 
 		},
 	}}
 	if len(cands) > 0 {
-		if name, wsID := teamWorkspaceID(ctx, errw, a.Config, syncScope, clientFor); wsID != "" {
+		if name, wsID := teamWorkspaceID(ctx, errw, a.Config, clientFor); wsID != "" {
 			dests = append(dests, &attachmentDest{
 				tag:      " (team " + name + ")",
 				stateKey: teamStateKey(wsID),
@@ -294,7 +296,7 @@ type attachmentSource struct {
 // team pass runs last, so under --force a team copy that differs from the personal
 // one wins: the team collection is what the team's remote runs read. Without
 // --force a differing local file is kept, whichever collection offered it.
-func pullStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, syncScope config.Scope, client *hosted.Client, server, project string, scope scopeSet, force bool) {
+func pullStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, client *hosted.Client, server, project string, scope scopeSet, force bool) {
 	srcs := []attachmentSource{{
 		noun:     "hosted",
 		stateKey: project,
@@ -305,7 +307,7 @@ func pullStoryAttachments(ctx context.Context, out, errw io.Writer, a *app.App, 
 			return client.DocumentFileContent(ctx, project, path)
 		},
 	}}
-	if name, wsID := teamWorkspaceID(ctx, errw, a.Config, syncScope, func() *hosted.Client { return client }); wsID != "" {
+	if name, wsID := teamWorkspaceID(ctx, errw, a.Config, func() *hosted.Client { return client }); wsID != "" {
 		srcs = append(srcs, attachmentSource{
 			tag:      " (team " + name + ")",
 			noun:     "the team copy",

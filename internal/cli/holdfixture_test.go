@@ -22,8 +22,8 @@ import (
 
 const (
 	otherLoc   = "loc_other_aaaaaaaa"
-	holdNoGit  = "[sync]\nhold_unpushed = false\n\n[hosted]\nproject = \"probe\"\n"
-	pullSyncTm = "[sync]\n\n[hosted]\nproject = \"probe\"\n"
+	holdNoGit  = "[sync]\nstories = \"personal\"\nledger = \"personal\"\nhold_unpushed = false\n\n[hosted]\nproject = \"probe\"\n"
+	pullSyncTm = "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
 )
 
 // noHoldRoutes is the route set of a hosted server without holds: location

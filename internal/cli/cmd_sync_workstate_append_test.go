@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,7 +23,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 	"github.com/bobmcallan/satelle/internal/ledger"
-	"github.com/bobmcallan/satelle/internal/syncscope"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 )
 
@@ -532,29 +532,25 @@ func TestPushAppendsNothingForWithheldStories(t *testing.T) {
 	}
 }
 
-// sty_9bdf08c4 AC7: nothing is dialled for the Chain service unless the repo's
-// resolved scope syncs, and nothing at all without a credential; the local log
-// is never touched.
+// sty_9bdf08c4 AC7: nothing is dialled for the Chain service unless the ledger
+// area is opted in, and nothing at all without a server; the local log is never
+// touched.
 func TestPushAppendsOnlyWhenConnectedAndOptedIn(t *testing.T) {
-	t.Run("scope local", func(t *testing.T) {
+	t.Run("ledger local", func(t *testing.T) {
 		ts, f := newFakeWorkstateServer(t)
 		seedCred(t, ts.URL)
-		workstateRepo(t, "[sync]\n")
+		workstateRepo(t, "[sync]\nstories = \"personal\"\nledger = \"local\"\n\n[hosted]\nproject = \"probe\"\n")
 		id := createStoryID(t, "alpha")
 		before := localLedgerTotal(t)
 
-		out, err := pushRaw(t, ts.URL)
-		if err != nil {
+		if out, err := pushRaw(t, ts.URL); err != nil {
 			t.Fatalf("push: %v\n%s", err, out)
 		}
-		if !strings.Contains(out, "scope: local") {
-			t.Errorf("an unbound push should report the local scope:\n%s", out)
-		}
-		if f.hasItem("probe", id) {
-			t.Error("an unbound repo pushed its stories")
+		if !f.hasItem("probe", id) {
+			t.Fatal("the stories area did not push, so the test proves nothing")
 		}
 		if n := f.chain.appendCount(); n != 0 {
-			t.Errorf("%d Appends with the scope local", n)
+			t.Errorf("%d Appends with the ledger area local", n)
 		}
 		if after := localLedgerTotal(t); after != before {
 			t.Errorf("local ledger rows %d -> %d", before, after)
@@ -575,8 +571,8 @@ func TestPushAppendsOnlyWhenConnectedAndOptedIn(t *testing.T) {
 		t.Cleanup(func() { hosted.SetTestGRPCDial(nil) })
 
 		out, err := runRoot(t, "sync", "workstate", "push", "--server", "http://hosted.example")
-		if err != nil || !strings.Contains(out, syncscope.ReasonSignedOut) {
-			t.Fatalf("push = %v\n%s, want the signed-out local scope", err, out)
+		if !errors.Is(err, hosted.ErrLoginRequired) {
+			t.Fatalf("push = %v\n%s, want the login-required refusal", err, out)
 		}
 		if n := dials.Load(); n != 0 {
 			t.Errorf("%d dials with no credential", n)

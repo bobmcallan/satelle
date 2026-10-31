@@ -24,14 +24,10 @@ type substrateFixture struct {
 	repo, data string
 	home       string
 	now        time.Time
-	// onlySkills puts every area but skills in step before each check, so a
-	// test judges skills alone.
-	onlySkills bool
 }
 
 // newSubstrateFixture writes a repo whose satelle.toml is toml (data dir ".satelle"
-// unless the toml relocates it) with a signed-in machine whose last resolve for
-// project p was personal.
+// unless the toml relocates it) with a signed-in machine.
 func newSubstrateFixture(t *testing.T, dataSub, toml string) *substrateFixture {
 	t.Helper()
 	home := testutil.IsolateHome(t)
@@ -47,48 +43,10 @@ func newSubstrateFixture(t *testing.T, dataSub, toml string) *substrateFixture {
 		}
 		data = moved
 	}
-	f := &substrateFixture{t: t, repo: repo, data: data, home: home, now: time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC), onlySkills: true}
-	f.scope(config.PersonalScope, "p")
-	return f
+	return &substrateFixture{t: t, repo: repo, data: data, home: home, now: time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)}
 }
 
-const substrateToml = "[sync]\nproject = \"p\"\nstale_after = \"24h\"\n"
-
-// scope records the scope the last sync resolved for binding.
-func (f *substrateFixture) scope(scope config.Scope, binding string) {
-	f.t.Helper()
-	if err := syncstate.RecordScope(f.home, f.repo, scope, binding, f.now); err != nil {
-		f.t.Fatal(err)
-	}
-}
-
-// othersInStep records every substrate area but skills as synced from its
-// current local files and checked in step.
-func (f *substrateFixture) othersInStep() {
-	f.t.Helper()
-	cfg, _, err := config.Load(filepath.Join(f.data, config.ConfigName))
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	ign, err := config.LoadIgnore(f.data)
-	if err != nil {
-		return // the check reports the unreadable ignore itself
-	}
-	abs, _ := filepath.Abs(f.repo)
-	for _, area := range config.SubstrateAreas(config.PersonalScope) {
-		if area == "skills" {
-			continue
-		}
-		local, err := snapsync.LocalShas(cfg, f.repo, area, ign)
-		if err != nil {
-			f.t.Fatal(err)
-		}
-		if err := hosted.SaveAreaBase(config.DefaultHostedServer, "p", abs, area, hosted.AreaBase{Version: 1, Files: local}); err != nil {
-			f.t.Fatal(err)
-		}
-		f.record(area, snapsync.StateInStep, f.now.Add(-time.Hour))
-	}
-}
+const substrateToml = "[sync]\nskills = \"personal\"\nproject = \"p\"\nstale_after = \"24h\"\n"
 
 func (f *substrateFixture) write(rel, body string) {
 	f.t.Helper()
@@ -121,9 +79,6 @@ func (f *substrateFixture) record(area, state string, at time.Time) {
 }
 
 func (f *substrateFixture) check() health.Findings {
-	if f.onlySkills {
-		f.othersInStep()
-	}
 	return CheckSubstrateSync(f.repo, f.data, f.home, f.now)
 }
 
@@ -146,46 +101,11 @@ func inStepFixture(t *testing.T) *substrateFixture {
 	return f
 }
 
-// AC9 (sty_b336c2b0): the substrate check judges from the recorded resolved
-// scope and the explicit [sync] project binding — an unbound repo (whatever its
-// directory is called), a bound repo whose last resolve was local, and a bound
-// repo whose recorded scope was for another binding are all local; a recorded
-// team or personal scope for the current binding is judged.
-func TestSubstrateJudgesFromRecordedScopeAndBinding(t *testing.T) {
-	localCases := []struct {
-		name, toml string
-		set        func(f *substrateFixture)
-		why        string
-	}{
-		{"unbound repo", "[sync]\nstale_after = \"24h\"\n", func(f *substrateFixture) {}, "unbound"},
-		{"unbound with a recorded scope", "[sync]\nstale_after = \"24h\"\n", func(f *substrateFixture) { f.scope(config.TeamScope, filepath.Base(f.repo)) }, "unbound"},
-		{"bound, recorded local", substrateToml, func(f *substrateFixture) { f.scope(config.LocalScope, "p") }, "resolved for project p"},
-		{"bound, recorded for another binding", substrateToml, func(f *substrateFixture) { f.scope(config.TeamScope, "other") }, "not yet resolved for project p"},
-	}
-	for _, c := range localCases {
-		t.Run(c.name, func(t *testing.T) {
-			f := newSubstrateFixture(t, ".satelle", c.toml)
-			f.onlySkills = false
-			c.set(f)
-			f.write("skills/x.md", "never pushed\n")
-			got := f.check()
-			if !got.OK() || len(got) != 1 || len(find(got, health.IDSyncSubstrateOk)) != 1 {
-				t.Fatalf("a local scope must be one info finding: %v", got)
-			}
-			if !strings.Contains(got[0].Detail, "sync scope local") || !strings.Contains(got[0].Detail, c.why) {
-				t.Fatalf("detail %q must say local (%s)", got[0].Detail, c.why)
-			}
-		})
-	}
-	for _, scope := range []config.Scope{config.PersonalScope, config.TeamScope} {
-		t.Run("bound, recorded "+scope.String(), func(t *testing.T) {
-			f := newSubstrateFixture(t, ".satelle", substrateToml)
-			f.scope(scope, "p")
-			f.write("skills/x.md", "never pushed\n")
-			if got := find(f.check(), health.IDSyncSubstrateUnpushed); len(got) != 1 || got[0].Artifact != "skills" {
-				t.Fatalf("a recorded %s scope must judge the substrate: %v", scope, f.check())
-			}
-		})
+func TestSubstrateAllLocalIsInfo(t *testing.T) {
+	f := newSubstrateFixture(t, ".satelle", "[sync]\nall = \"local\"\nstale_after = \"24h\"\n")
+	got := f.check()
+	if !got.OK() || len(find(got, health.IDSyncSubstrateOk)) != 1 {
+		t.Fatalf("all-local must be one info finding: %v", got)
 	}
 }
 
@@ -289,7 +209,7 @@ func TestSubstrateStaleOrAbsentCheck(t *testing.T) {
 }
 
 func TestSubstrateStaleAfterUnsetWarnsButStillJudges(t *testing.T) {
-	f := newSubstrateFixture(t, ".satelle", "[sync]\nproject = \"p\"\n")
+	f := newSubstrateFixture(t, ".satelle", "[sync]\nskills = \"personal\"\nproject = \"p\"\n")
 	f.write("skills/x.md", "x\n")
 	f.base("skills", map[string]string{"skills/x.md": "x\n"}, nil)
 	got := f.check()
@@ -318,16 +238,15 @@ func TestSubstrateUnboundNamesLoginOrBind(t *testing.T) {
 	}
 }
 
-// AC5: areas come from config.ConfigAreas + documents and the repo's resolved
-// scope, never from this repo's layout — a relocated data dir and a recorded
-// personal scope.
+// AC5: areas come from config.ConfigAreas + documents and the repo's [sync]
+// scopes, never from this repo's layout — a relocated data dir and
+// [sync] all = personal.
 func TestSubstrateAreasComeFromConfigNotLayout(t *testing.T) {
-	f := newSubstrateFixture(t, "meta", "data_dir = \"meta\"\n[sync]\nproject = \"p\"\nstale_after = \"24h\"\n")
-	f.onlySkills = false
+	f := newSubstrateFixture(t, "meta", "data_dir = \"meta\"\n[sync]\nall = \"personal\"\nproject = \"p\"\nstale_after = \"24h\"\n")
 	f.write("skills/x.md", "x\n")
-	want := config.SubstrateAreas(config.PersonalScope)
-	if len(want) != len(config.ConfigAreas)+1 {
-		t.Fatalf("SubstrateAreas under a personal scope: %v", want)
+	want, err := config.SubstrateAreas(config.Config{Sync: map[string]string{"all": "personal"}})
+	if err != nil || len(want) != len(config.ConfigAreas)+1 {
+		t.Fatalf("SubstrateAreas under all = personal: %v %v", want, err)
 	}
 	checked := map[string]bool{}
 	for _, fd := range find(f.check(), health.IDSyncSubstrateUnchecked) {
@@ -364,9 +283,6 @@ func TestCheckFailsUnpushedSubstrate(t *testing.T) {
 	prev := signedIn
 	signedIn = func(string) bool { return true }
 	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = ""; signedIn = prev })
-	if err := syncstate.RecordScope(os.Getenv("SATELLE_HOME"), root, config.PersonalScope, "p", time.Now()); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(filepath.Join(root, ".satelle", "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}

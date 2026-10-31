@@ -23,7 +23,7 @@ import (
 func TestMutatingCLIDoesNotDialHosted(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	repo := workstateRepo(t, "[review]\ngate_create = false\n\n[sync]\n\n[hosted]\nproject = \"probe\"\n")
+	repo := workstateRepo(t, "[review]\ngate_create = false\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	ms, err := mirror.Open(filepath.Join(t.TempDir(), "mirror.db"))
 	if err != nil {

@@ -9,7 +9,6 @@ import (
 
 	"time"
 
-	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/testutil"
@@ -168,12 +167,9 @@ func TestHealthyRepo(t *testing.T) {
 func TestCheckFailsUnbackedWorkstate(t *testing.T) {
 	root := newFixtureRepo(t, fixtureOpts{
 		extraFiles: map[string]string{
-			"satelle.toml": "[sync]\nproject = \"p\"\nstale_after = \"1h\"\n",
+			"satelle.toml": "[sync]\nstories = \"personal\"\nstale_after = \"1h\"\n",
 		},
 	})
-	if err := syncstate.RecordScope(os.Getenv("SATELLE_HOME"), root, config.PersonalScope, "p", time.Now()); err != nil {
-		t.Fatal(err)
-	}
 	if err := syncstate.RecordPush(os.Getenv("SATELLE_HOME"), root, true, "", "", time.Now().Add(-2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -189,12 +185,9 @@ func TestCheckFailsUnbackedWorkstate(t *testing.T) {
 func TestCheckFailsStandingPushFailure(t *testing.T) {
 	root := newFixtureRepo(t, fixtureOpts{
 		extraFiles: map[string]string{
-			"satelle.toml": "[sync]\nproject = \"p\"\nstale_after = \"24h\"\n",
+			"satelle.toml": "[sync]\nstories = \"personal\"\nstale_after = \"24h\"\n",
 		},
 	})
-	if err := syncstate.RecordScope(os.Getenv("SATELLE_HOME"), root, config.PersonalScope, "p", time.Now()); err != nil {
-		t.Fatal(err)
-	}
 	if err := syncstate.RecordPush(os.Getenv("SATELLE_HOME"), root, false, "hosted down", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}

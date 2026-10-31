@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/hosted"
-	"github.com/bobmcallan/satelle/internal/syncscope"
 )
 
 // fakeDocStore is an in-memory workspace document store with a monotonic
@@ -161,7 +160,7 @@ func TestSyncDocumentsPushPullByteExact(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	src := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	src := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	body := "---\ntype: document\n---\nhello docs\n"
 	writeRepoFile(t, src, ".satelle/documents/note.md", body)
 	pointAt(t, src)
@@ -174,7 +173,7 @@ func TestSyncDocumentsPushPullByteExact(t *testing.T) {
 		t.Fatalf("push output: %q", buf.String())
 	}
 
-	dst := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -189,8 +188,7 @@ func TestSyncDocumentsPushPullByteExact(t *testing.T) {
 	}
 }
 
-// TestSyncDocumentsPushSkipsLocalArea: an unbound repo is local and skips the
-// area, naming why (AC1, AC5).
+// TestSyncDocumentsPushSkipsLocalArea: default local scope skips the area (AC1, AC5).
 func TestSyncDocumentsPushSkipsLocalArea(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
@@ -203,7 +201,7 @@ func TestSyncDocumentsPushSkipsLocalArea(t *testing.T) {
 	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	if !strings.Contains(buf.String(), "documents push: skipping — scope: local — "+syncscope.ReasonUnbound) {
+	if !strings.Contains(buf.String(), "scope is local") {
 		t.Fatalf("expected local-skip message, got: %q", buf.String())
 	}
 }
@@ -214,7 +212,7 @@ func TestSyncDocumentsPushSharedFlagGoesPersonal(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/documents/shared.md", "---\ntype: document\nshared: true\n---\nteam doc\n")
 	writeRepoFile(t, repo, ".satelle/documents/private.md", "---\ntype: document\n---\nprivate doc\n")
 	pointAt(t, repo)
@@ -228,7 +226,7 @@ func TestSyncDocumentsPushSharedFlagGoesPersonal(t *testing.T) {
 	}
 
 	// Personal pull gets both (sync destination is personal only).
-	dst := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -241,14 +239,13 @@ func TestSyncDocumentsPushSharedFlagGoesPersonal(t *testing.T) {
 	}
 }
 
-// TestSyncDocumentsPushTeamScopeLandsInTheProject: a team scope sends documents
-// to the bound project, with no shared:true note (AC1, AC3).
-func TestSyncDocumentsPushTeamScopeLandsInTheProject(t *testing.T) {
+// TestSyncDocumentsPushAreaSharedGoesPersonal: [sync] documents = "shared"
+// is not a team destination — lands personal with the deprecation note (AC1, AC3).
+func TestSyncDocumentsPushAreaSharedGoesPersonal(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
-	useScope(t, kindTeam)
 
-	repo := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"shared\"\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/documents/area.md", "---\ntype: document\n---\nshared-area doc\n")
 	pointAt(t, repo)
 
@@ -256,11 +253,11 @@ func TestSyncDocumentsPushTeamScopeLandsInTheProject(t *testing.T) {
 	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("push: %v\n%s", err, buf.String())
 	}
-	if strings.Contains(buf.String(), "shared:true") {
-		t.Fatalf("a team scope must not print the shared:true note, got: %q", buf.String())
+	if !strings.Contains(buf.String(), "satelle publish") {
+		t.Fatalf("expected publish note for area shared, got: %q", buf.String())
 	}
 
-	dst := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -277,7 +274,7 @@ func TestSyncDocumentsPullIncremental(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	src := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	src := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, src, ".satelle/documents/one.md", "first\n")
 	pointAt(t, src)
 	cmd, _ := testCmd()
@@ -285,7 +282,7 @@ func TestSyncDocumentsPullIncremental(t *testing.T) {
 		t.Fatalf("push one: %v", err)
 	}
 
-	dst := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -325,32 +322,33 @@ func TestSyncDocumentsPullIncremental(t *testing.T) {
 	}
 }
 
-// TestSyncDocumentsPushSignedOutIsLocal: with no stored credential the scope is
-// local and the push says to sign in, asking nothing of the server or account.
-func TestSyncDocumentsPushSignedOutIsLocal(t *testing.T) {
+// TestSyncDocumentsPushAuthFailure: no stored credential yields ErrLoginRequired,
+// never a raw body (AC4, AC5).
+func TestSyncDocumentsPushAuthFailure(t *testing.T) {
 	ts := newFakeDocServer(t)
 	// Deliberately do NOT seedCred — no stored tokens.
-	acct := useScope(t, kindPersonal)
 
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/documents/a.md", "body")
 	pointAt(t, repo)
 
-	cmd, buf := testCmd()
-	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
-		t.Fatalf("push: %v", err)
+	cmd, _ := testCmd()
+	err := runSyncDocumentsPush(cmd, ts.URL, "", false)
+	if err == nil {
+		t.Fatal("expected auth failure")
 	}
-	if !strings.Contains(buf.String(), "scope: local — "+syncscope.ReasonSignedOut) {
-		t.Errorf("push should say to sign in, got: %q", buf.String())
+	if !strings.Contains(err.Error(), "not signed in") && !strings.Contains(err.Error(), "login") {
+		t.Errorf("auth error should mention login, got: %v", err)
 	}
-	if acct.callCount() != 0 {
-		t.Errorf("a signed-out resolve asked the account %d time(s)", acct.callCount())
+	// Must not dump a raw HTTP body.
+	if strings.Contains(err.Error(), "{") || strings.Contains(err.Error(), "HTTP 401") {
+		t.Errorf("auth error leaked raw body/code: %v", err)
 	}
 }
 
-// TestSyncDocumentsPushUnboundIsLocal: with no explicit [sync] project the scope
-// is local; neither the server nor the account is contacted.
-func TestSyncDocumentsPushUnboundIsLocal(t *testing.T) {
+// TestSyncDocumentsPushRequiresBoundProject (AC5): personal documents push without
+// a bound project fails client-side; the fake server is never contacted.
+func TestSyncDocumentsPushRequiresBoundProject(t *testing.T) {
 	var hits int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -362,25 +360,23 @@ func TestSyncDocumentsPushUnboundIsLocal(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n") // no project
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n") // no project
 	writeRepoFile(t, repo, ".satelle/documents/a.md", "body")
 	pointAt(t, repo)
 
-	acct := useScope(t, kindPersonal)
-	cmd, buf := testCmd()
-	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
-		t.Fatalf("push: %v\n%s", err, buf.String())
+	cmd, _ := testCmd()
+	err := runSyncDocumentsPush(cmd, ts.URL, "", false)
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v", err)
 	}
-	if !strings.Contains(buf.String(), syncscope.ReasonUnbound) {
-		t.Errorf("should name the unbound local scope: %q", buf.String())
-	}
-	if hits != 0 || acct.callCount() != 0 {
-		t.Fatalf("an unbound push contacted the server (%d) or the account (%d)", hits, acct.callCount())
+	if hits == 0 {
+		t.Fatal("default project must contact the server")
 	}
 }
 
-// TestSyncDocumentsPullUnboundIsLocal: likewise for pull.
-func TestSyncDocumentsPullUnboundIsLocal(t *testing.T) {
+// TestSyncDocumentsPullRequiresBoundProject: personal documents pull without a
+// bound project fails client-side; the fake server is never contacted.
+func TestSyncDocumentsPullRequiresBoundProject(t *testing.T) {
 	var hits int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -392,19 +388,16 @@ func TestSyncDocumentsPullUnboundIsLocal(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n") // no project
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n") // no project
 	pointAt(t, repo)
 
-	acct := useScope(t, kindPersonal)
-	cmd, buf := testCmd()
-	if err := runSyncDocumentsPull(cmd, ts.URL, ""); err != nil {
-		t.Fatalf("pull: %v\n%s", err, buf.String())
+	cmd, _ := testCmd()
+	err := runSyncDocumentsPull(cmd, ts.URL, "")
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v", err)
 	}
-	if !strings.Contains(buf.String(), syncscope.ReasonUnbound) {
-		t.Errorf("should name the unbound local scope: %q", buf.String())
-	}
-	if hits != 0 || acct.callCount() != 0 {
-		t.Fatalf("an unbound pull contacted the server (%d) or the account (%d)", hits, acct.callCount())
+	if hits == 0 {
+		t.Fatal("default project must contact the server")
 	}
 }
 
@@ -414,7 +407,7 @@ func TestSyncPersonalIsolatedAcrossProjects(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	repoA := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"proj-a\"\n")
+	repoA := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-a\"\n")
 	writeRepoFile(t, repoA, ".satelle/documents/note.md", "from-a\n")
 	pointAt(t, repoA)
 	cmd, buf := testCmd()
@@ -422,7 +415,7 @@ func TestSyncPersonalIsolatedAcrossProjects(t *testing.T) {
 		t.Fatalf("push A: %v\n%s", err, buf.String())
 	}
 
-	repoB := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"proj-b\"\n")
+	repoB := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-b\"\n")
 	writeRepoFile(t, repoB, ".satelle/documents/note.md", "from-b\n")
 	pointAt(t, repoB)
 	cmd2, buf2 := testCmd()
@@ -431,7 +424,7 @@ func TestSyncPersonalIsolatedAcrossProjects(t *testing.T) {
 	}
 
 	// Pull as proj-a into a fresh tree — only A's content.
-	dstA := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"proj-a\"\n")
+	dstA := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-a\"\n")
 	pointAt(t, dstA)
 	cmd3, buf3 := testCmd()
 	if err := runSyncDocumentsPull(cmd3, ts.URL, ""); err != nil {
@@ -446,7 +439,7 @@ func TestSyncPersonalIsolatedAcrossProjects(t *testing.T) {
 	}
 
 	// Pull as proj-b — only B's content (AC3/AC4).
-	dstB := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"proj-b\"\n")
+	dstB := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-b\"\n")
 	pointAt(t, dstB)
 	cmd4, buf4 := testCmd()
 	if err := runSyncDocumentsPull(cmd4, ts.URL, ""); err != nil {
@@ -480,7 +473,7 @@ func TestSyncDocumentsPullSkipsExcludedAndAdvancesCursor(t *testing.T) {
 		t.Fatalf("seed legit: %v", err)
 	}
 
-	dst := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd, buf := testCmd()
 	if err := runSyncDocumentsPull(cmd, ts.URL, ""); err != nil {
@@ -532,7 +525,7 @@ func TestSyncDocumentsPullDoesNotFetchExcludedPaths(t *testing.T) {
 		t.Fatalf("seed legit: %v", err)
 	}
 
-	dst := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	// Reset fetch log after seeding (seed PushDocumentFile is PUT, not get —
 	// but clear anyway so the assertion only covers the pull).
@@ -603,7 +596,7 @@ func TestSyncDocumentsPullAllSkippedReportsSkip(t *testing.T) {
 		t.Fatalf("seed db poison: %v", err)
 	}
 
-	dst := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	// Pre-seed a live db that must not be clobbered (AC3).
 	dbPath := filepath.Join(dst, ".satelle", "satelle.db")
 	if err := os.WriteFile(dbPath, []byte("LIVE"), 0o644); err != nil {
@@ -636,7 +629,7 @@ func TestSyncDocumentsPullReadsOnlyBoundProject(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	src := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"proj-a\"\n")
+	src := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-a\"\n")
 	writeRepoFile(t, src, ".satelle/documents/only-a.md", "secret-a\n")
 	pointAt(t, src)
 	cmd, _ := testCmd()
@@ -644,7 +637,7 @@ func TestSyncDocumentsPullReadsOnlyBoundProject(t *testing.T) {
 		t.Fatalf("seed push: %v", err)
 	}
 
-	dst := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"proj-b\"\n")
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-b\"\n")
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -663,8 +656,7 @@ func TestSyncDocumentsPullReadsOnlyBoundProject(t *testing.T) {
 
 // TestSyncDocumentsPushDryRunReportsWithheld (sty_698e70b6 AC5).
 func TestSyncDocumentsPushDryRunReportsWithheld(t *testing.T) {
-	signInTo(t, "https://example.invalid")
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/documents/keep.md", "ok\n")
 	writeRepoFile(t, repo, ".satelle/documents/notes.local.md", "SECRET\n")
 	pointAt(t, repo)
@@ -686,7 +678,7 @@ func TestSyncDocumentsPushDryRunReportsWithheld(t *testing.T) {
 func TestSyncDocumentsPushSkipsUnchanged(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/documents/doc.md", "stable content\n")
 	pointAt(t, repo)
 

@@ -19,7 +19,7 @@ import (
 // (sty_7361569a). These tests drive a real bare remote and real clones; only the
 // hosted server is faked.
 
-const holdSyncToml = "[sync]\n\n[hosted]\nproject = \"probe\"\n"
+const holdSyncToml = "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
 
 // holdRemote is a bare remote with a main branch that has one commit.
 func holdRemote(t *testing.T) string {
@@ -386,7 +386,7 @@ func TestWorkstatePushHoldOffSendsUnpushedStories(t *testing.T) {
 	w := newHoldWorld(t, holdSyncToml+"\n")
 	// Rewrite the config with the switch off.
 	cfg := filepath.Join(w.repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfg, []byte("[sync]\nhold_unpushed = false\n\n[hosted]\nproject = \"probe\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte("[sync]\nstories = \"personal\"\nledger = \"personal\"\nhold_unpushed = false\n\n[hosted]\nproject = \"probe\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out := w.push(t)
@@ -399,7 +399,7 @@ func TestWorkstatePushHoldOffSendsUnpushedStories(t *testing.T) {
 
 // AC6: a value that is not a boolean is a config error, not a silent default.
 func TestWorkstatePushHoldUnpushedBadValueIsConfigError(t *testing.T) {
-	w := newHoldWorld(t, "[sync]\nhold_unpushed = \"maybe\"\n\n[hosted]\nproject = \"probe\"\n")
+	w := newHoldWorld(t, "[sync]\nstories = \"personal\"\nledger = \"personal\"\nhold_unpushed = \"maybe\"\n\n[hosted]\nproject = \"probe\"\n")
 	out, err := runRoot(t, "sync", "workstate", "push", "--server", w.url)
 	if err == nil || !strings.Contains(err.Error(), "hold_unpushed") {
 		t.Fatalf("want a hold_unpushed config error, got err=%v out=%s", err, out)

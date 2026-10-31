@@ -29,10 +29,10 @@ func newSyncStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Print whether each synced area is in step with the bound project's hosted copy",
-		Long: `status names the resolved sync scope and its source (account, team,
-project), then prints each synced area's state against the hosted copy — in
-step, unpushed, behind, diverged, unmerged, never synced or unavailable — with
-the snapshot last synced, the hosted snapshot and the next command.
+		Long: `status contacts the bound hosted project and prints, for every config area and
+documents that [sync] opts in, its state — in step, unpushed, behind, diverged,
+unmerged, never synced or unavailable — with the snapshot this checkout last
+synced, the hosted snapshot and the next command to run.
 
 The state comes from the planning a push runs, so a push that would be refused
 shows as the reason. Exits non-zero when any area is not in step. Each verified
@@ -124,12 +124,10 @@ func runSyncStatusForStory(cmd *cobra.Command, serverArg, storyID string) error 
 	if err != nil {
 		return err
 	}
-	server := resolveServer(serverArg)
-	res, err := resolveSyncScope(cmd, cfg, root, server)
+	synced, err := config.SubstrateAreas(cfg)
 	if err != nil {
 		return err
 	}
-	synced := config.SubstrateAreas(res.Scope)
 	out := cmd.OutOrStdout()
 	var touched map[string][]string
 	if len(synced) > 0 {
@@ -157,6 +155,7 @@ func runSyncStatusForStory(cmd *cobra.Command, serverArg, storyID string) error 
 		}
 	}
 
+	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
@@ -197,17 +196,16 @@ func runSyncStatus(cmd *cobra.Command, serverArg string) error {
 	if err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
-	server := resolveServer(serverArg)
-	res, err := resolveSyncScope(cmd, cfg, repoRoot, server)
+	areas, err := config.SubstrateAreas(cfg)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, res.Line())
-	if res.Scope == config.LocalScope {
+	out := cmd.OutOrStdout()
+	if len(areas) == 0 {
+		fmt.Fprintln(out, "Nothing to check — every config area and documents is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
 		return nil
 	}
-	areas := config.SubstrateAreas(res.Scope)
+	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}

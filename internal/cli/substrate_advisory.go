@@ -170,18 +170,16 @@ func substrateAdvisoryOffline(repoRoot, dataDir string) string {
 }
 
 // substrateAdvisoryLive checks the hosted copy within substrateProbeTimeout,
-// records what it found, and renders the advisory from it. The areas it checks
-// are those of the scope the last sync resolved for the explicit binding
-// (syncstate.RecordedScope), the same scope the doctor judges from. A server that cannot
+// records what it found, and renders the advisory from it. A server that cannot
 // be reached, or an unbound machine, falls back to the offline line marked
 // unverified.
 func substrateAdvisoryLive(ctx context.Context, cfg config.Config, repoRoot, dataDir string) string {
-	project := cfg.SyncProject()
-	areas := config.SubstrateAreas(syncstate.RecordedScope(config.GlobalDir(), repoRoot, project))
-	if len(areas) == 0 {
+	areas, err := config.SubstrateAreas(cfg)
+	if err != nil || len(areas) == 0 {
 		return ""
 	}
 	server := resolveServer("")
+	project := config.ResolveBoundProject(cfg, repoRoot)
 	if project == "" || server == "" {
 		return substrateAdvisoryOffline(repoRoot, dataDir)
 	}

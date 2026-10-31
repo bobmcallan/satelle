@@ -237,7 +237,8 @@ func TestLocalAgentsFileNeverSyncs(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, ".satelle/workflows/agents.toml", "[executor]\ncommand = \"in-loop\"\n")
 	writeFile(t, repo, ".satelle/workflows/agents.local.toml", "[reviewer]\nprofile = \"mine\"\n")
-	b, err := ConfigFiles(Config{}, TeamScope, repo, Ignore{})
+	cfg := Config{Sync: map[string]string{"workflows": "shared", "agents": "personal"}}
+	b, err := ConfigFiles(cfg, repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -227,8 +227,16 @@ func pushConfigSnapshots(cmd *cobra.Command, cfg config.Config, repoRoot, dataDi
 	for _, f := range files {
 		byArea[f.Area] = append(byArea[f.Area], snapsync.PushFile{Path: f.Path, Content: f.Content})
 	}
-	// Only a non-local scope reaches a push, and under one every config area moves.
-	areas := append([]string{}, config.ConfigAreas...)
+	var areas []string
+	for _, area := range config.ConfigAreas {
+		scope, err := config.ScopeFor(cfg, area)
+		if err != nil {
+			return pushOutcome{}, true, err
+		}
+		if scope != config.LocalScope {
+			areas = append(areas, area)
+		}
+	}
 	d := newSnapDriver(cfg, client, cmd.OutOrStdout(), server, project, repoRoot, dataDir, ign,
 		newConfigRecords(client, project, manifest),
 		&configBlobs{client: client, project: project, manifest: manifest})

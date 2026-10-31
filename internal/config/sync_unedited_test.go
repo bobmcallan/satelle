@@ -57,6 +57,10 @@ var keptPaths = []string{
 	"skills/satelle-workflow-advisor.md",
 }
 
+func syncAllPersonal() Config {
+	return Config{Sync: map[string]string{"all": "personal"}}
+}
+
 func bundlePaths(files []ConfigFile) []string {
 	var out []string
 	for _, f := range files {
@@ -73,7 +77,7 @@ func TestConfigFilesLeavesUneditedDefaultsOut(t *testing.T) {
 	repo := t.TempDir()
 	uneditedTree(t, repo)
 
-	b, err := ConfigFiles(Config{}, PersonalScope, repo, Ignore{})
+	b, err := ConfigFiles(syncAllPersonal(), repo, Ignore{})
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
@@ -102,7 +106,7 @@ func TestAreaFilesLeavesUneditedDefaultsOut(t *testing.T) {
 	repo := t.TempDir()
 	uneditedTree(t, repo)
 
-	files, err := AreaFiles(Config{}, repo, "skills", Ignore{})
+	files, err := AreaFiles(syncAllPersonal(), repo, "skills", Ignore{})
 	if err != nil {
 		t.Fatalf("AreaFiles: %v", err)
 	}
@@ -158,7 +162,7 @@ func TestUneditedDefaultClassification(t *testing.T) {
 func TestConvergingASeedIsNotAnEdit(t *testing.T) {
 	repo := t.TempDir()
 	uneditedTree(t, repo)
-	before, err := ConfigFiles(Config{}, PersonalScope, repo, Ignore{})
+	before, err := ConfigFiles(syncAllPersonal(), repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +171,7 @@ func TestConvergingASeedIsNotAnEdit(t *testing.T) {
 	goals := embeddedBody(t, "principles", "satelle-agent-goals")
 	writeFile(t, repo, ".satelle/principles/satelle-agent-goals.md", stampedCopy(goals))
 
-	after, err := ConfigFiles(Config{}, PersonalScope, repo, Ignore{})
+	after, err := ConfigFiles(syncAllPersonal(), repo, Ignore{})
 	if err != nil {
 		t.Fatal(err)
 	}

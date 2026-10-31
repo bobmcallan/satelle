@@ -3,15 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/snapsync"
-	"github.com/bobmcallan/satelle/internal/syncscope"
 )
 
 // `satelle sync pull` and `sync push` (sty_0fa4f732), in the two-machine
@@ -173,34 +170,17 @@ func TestSyncPullUnpushedAreaIsANoOp(t *testing.T) {
 	}
 }
 
-// A signed-out machine is local: nothing is pulled, nothing is asked of the
-// server, and pull says to sign in.
-func TestSyncPullSignedOutIsLocal(t *testing.T) {
+// An unreadable hosted copy (here, no login) is unavailable: nothing is pulled
+// and pull exits non-zero with the next command.
+func TestSyncPullUnavailableExitsNonZero(t *testing.T) {
 	ts, _ := newSnapServer(t) // no credential seeded
 	m := newSnapMachine(t, ts.URL)
-	m.write("skills/x.md", "x\n")
-	out, err := m.pull("--fast-forward-only")
-	if err != nil || !strings.Contains(out, "scope: local — "+syncscope.ReasonSignedOut) {
-		t.Fatalf("a signed-out pull is local and names the login: %v\n%s", err, out)
-	}
-	if got := m.read("skills/x.md"); got != "x\n" {
-		t.Errorf("skills/x.md = %q, want it untouched", got)
-	}
-}
-
-// An unreadable hosted copy (here, a server that is gone) is unavailable:
-// nothing is pulled and pull exits non-zero with the next command.
-func TestSyncPullUnavailableExitsNonZero(t *testing.T) {
-	gone := httptest.NewServer(http.NotFoundHandler())
-	gone.Close()
-	signInTo(t, gone.URL)
-	m := newSnapMachine(t, gone.URL)
 	m.write("skills/x.md", "x\n")
 	out, err := m.pull("--fast-forward-only")
 	if err == nil || !strings.Contains(err.Error(), "unavailable") {
 		t.Fatalf("an unavailable hosted copy must exit non-zero: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "satelle sync") {
+	if !strings.Contains(out, "satelle login") {
 		t.Errorf("the report does not name the next command:\n%s", out)
 	}
 	if got := m.read("skills/x.md"); got != "x\n" {
@@ -342,9 +322,7 @@ func TestSyncHelpListsTheGitAlignedVerbsFirst(t *testing.T) {
 // bare sync prints.
 func TestSyncPushRunsOnlyThePushLegs(t *testing.T) {
 	repo := tempRepo(t)
-	signInTo(t, "http://sync.example.invalid")
-	portableAgents(t, repo)
-	cfg := "[sync]\nproject = \"probe\"\n"
+	cfg := "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +352,7 @@ func TestSyncPushRunsOnlyThePushLegs(t *testing.T) {
 func TestSyncPushLiveDoesNotPull(t *testing.T) {
 	ts, f := newFakeSyncServer(t)
 	seedCred(t, ts.URL)
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/skills/my-skill.md", "---\ntype: skill\n---\nbody\n")
 	writeRepoFile(t, repo, ".satelle/documents/local-doc.md", "# local\n")
 	pointAt(t, repo)

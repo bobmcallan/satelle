@@ -22,12 +22,23 @@ func checkSyncHealth(repoRoot, dataDir, globalDir string, now time.Time) health.
 	return checkWorkstatePush(cfg, cfgPath, repoRoot, globalDir, now)
 }
 
-// checkWorkstatePush judges the recorded work-state push against cfg, under the
-// scope the last sync resolved for the repo's explicit binding.
+// checkWorkstatePush judges the recorded work-state push against cfg.
 func checkWorkstatePush(cfg config.Config, cfgPath, repoRoot, globalDir string, now time.Time) health.Findings {
-	if syncstate.RecordedScope(globalDir, repoRoot, cfg.SyncProject()) == config.LocalScope {
+
+	allLocal := true
+	for _, area := range config.WorkstateAreas {
+		sc, serr := config.ScopeFor(cfg, area)
+		if serr != nil {
+			return health.Findings{health.Error(health.IDSyncConfig, "Workstate sync config", serr.Error()).About(cfgPath)}
+		}
+		if sc != config.LocalScope {
+			allLocal = false
+			break
+		}
+	}
+	if allLocal {
 		return health.Findings{health.Info(health.IDSyncLocal, "Work state is local-only",
-			"sync scope local ("+localScopeWhy(cfg, globalDir, repoRoot)+"); not flagged as unbacked").About(repoRoot)}
+			"work-state areas are local; not flagged as unbacked").About(repoRoot)}
 	}
 
 	st, _, lerr := syncstate.Load(globalDir, repoRoot)
@@ -73,20 +84,6 @@ func checkWorkstatePush(cfg config.Config, cfgPath, repoRoot, globalDir string, 
 	out = append(out, health.Info(health.IDSyncOk, "Workstate push",
 		fmt.Sprintf("last successful push %s", st.PushLastSuccess.UTC().Format(time.RFC3339))).About(repoRoot))
 	return out
-}
-
-// localScopeWhy says why the offline checks judge a repo local: it is unbound,
-// the last sync resolved local for its binding, or no sync has resolved its
-// current binding yet.
-func localScopeWhy(cfg config.Config, globalDir, repoRoot string) string {
-	project := cfg.SyncProject()
-	if project == "" {
-		return "unbound"
-	}
-	if st, ok, err := syncstate.Load(globalDir, repoRoot); err == nil && ok && st.Binding == project {
-		return "resolved for project " + project + " at " + st.ScopeAt.UTC().Format(time.RFC3339)
-	}
-	return "not yet resolved for project " + project + " — run `satelle sync status`"
 }
 
 func formatAge(d time.Duration) string {

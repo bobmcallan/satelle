@@ -16,7 +16,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
-	"github.com/bobmcallan/satelle/internal/syncscope"
 )
 
 // fakeConfigStore is an in-memory versioned config store matching the server's
@@ -92,8 +91,6 @@ func sha256hex(b []byte) string {
 // newFakeConfigServer stands up a hosted server whose workspaces are a personal
 // "personal" (id ws-personal) and a team "Acme" (id ws-team), with the full
 // per-file config PUT/GET surface, project-addressed (sty_ca64d0cb).
-// Its documents collection is always empty, so a composed sync's documents legs
-// have nothing to move.
 func newFakeConfigServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -102,10 +99,6 @@ func newFakeConfigServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/projects/")
 		segs := strings.SplitN(rest, "/", 3) // [project, "config", path?]
-		if len(segs) == 2 && segs[1] == "documents" && r.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "cursor": ""})
-			return
-		}
 		if len(segs) < 2 || segs[1] != "config" {
 			http.NotFound(w, r)
 			return
@@ -209,8 +202,8 @@ func TestSyncConfigPushDeploysByteExact(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	// Source repo: a personal scope sends every config area.
-	src := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	// Source repo: personal-scope skills + constitution (sync is personal-only).
+	src := syncConfigRepo(t, "[sync]\nskills = \"personal\"\nconstitution = \"personal\"\n"+boundProjectToml)
 	skillBody := "---\ntype: skill\n---\npersonal skill\n"
 	constBody := "# project constitution\n"
 	writeRepoFile(t, src, ".satelle/skills/team-skill.md", skillBody)
@@ -221,7 +214,7 @@ func TestSyncConfigPushDeploysByteExact(t *testing.T) {
 	if err := runSyncConfigPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("push: %v\n%s", err, buf.String())
 	}
-	if !strings.Contains(buf.String(), "Pushed") || !strings.Contains(buf.String(), "4 new") {
+	if !strings.Contains(buf.String(), "Pushed") || !strings.Contains(buf.String(), "2 new") {
 		t.Fatalf("push output: %q", buf.String())
 	}
 
@@ -233,7 +226,7 @@ func TestSyncConfigPushDeploysByteExact(t *testing.T) {
 	if err := runSyncConfigDeploy(cmd2, ts.URL, "personal", 0); err != nil {
 		t.Fatalf("deploy: %v\n%s", err, buf2.String())
 	}
-	if !strings.Contains(buf2.String(), "Deployed 4 file") {
+	if !strings.Contains(buf2.String(), "Deployed 2 file") {
 		t.Fatalf("deploy output: %q", buf2.String())
 	}
 	gotSkill, err := os.ReadFile(filepath.Join(dst, ".satelle", "skills", "team-skill.md"))
@@ -274,7 +267,7 @@ func TestSyncConfigPushSharedFlagGoesPersonal(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/skills/shared-one.md", "---\ntype: skill\nshared: true\n---\nshared body\n")
 	writeRepoFile(t, repo, ".satelle/skills/private-one.md", "---\ntype: skill\n---\nprivate body\n")
 	pointAt(t, repo)
@@ -309,7 +302,7 @@ func TestSyncConfigPushIdempotent(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/principles/rule.md", "one rule\n")
 	pointAt(t, repo)
 
@@ -317,9 +310,8 @@ func TestSyncConfigPushIdempotent(t *testing.T) {
 	if err := runSyncConfigPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("first push: %v", err)
 	}
-	// principles/rule.md plus the seeded agents.toml and satelle.toml.
-	if !strings.Contains(buf.String(), "3 new") {
-		t.Fatalf("first push should report 3 new: %q", buf.String())
+	if !strings.Contains(buf.String(), "1 new") {
+		t.Fatalf("first push should report 1 new: %q", buf.String())
 	}
 	cmd2, buf2 := testCmd()
 	if err := runSyncConfigPush(cmd2, ts.URL, "", false); err != nil {
@@ -327,8 +319,8 @@ func TestSyncConfigPushIdempotent(t *testing.T) {
 	}
 	// After sty_88e83180 the client skips the PUT entirely when the server
 	// manifest sha matches — reported as "skipped (unchanged, not uploaded)".
-	if !strings.Contains(buf2.String(), "3 skipped") {
-		t.Fatalf("idempotent re-push should report 3 skipped (no upload): %q", buf2.String())
+	if !strings.Contains(buf2.String(), "1 skipped") {
+		t.Fatalf("idempotent re-push should report 1 skipped (no upload): %q", buf2.String())
 	}
 }
 
@@ -338,7 +330,7 @@ func TestSyncConfigDeployVersionPin(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/principles/rule.md", "version one\n")
 	pointAt(t, repo)
 	cmd, _ := testCmd()
@@ -370,7 +362,7 @@ func TestSyncConfigPushDryRun(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/skills/shared-one.md", "---\nshared: true\n---\nx\n")
 	writeRepoFile(t, repo, ".satelle/skills/private-one.md", "---\n---\nx\n")
 	pointAt(t, repo)
@@ -392,15 +384,13 @@ func TestSyncConfigPushDryRun(t *testing.T) {
 	}
 }
 
-// TestSyncConfigPushTeamScopeLandsInTheProject: a team scope sends the config to
-// the bound project, not a separate team destination, and says nothing of the
-// old shared routing (AC1, AC3).
-func TestSyncConfigPushTeamScopeLandsInTheProject(t *testing.T) {
+// TestSyncConfigPushAreaSharedGoesPersonal: [sync] area = "shared" (wholesale)
+// is not a team destination — lands personal with the deprecation note (AC1, AC3).
+func TestSyncConfigPushAreaSharedGoesPersonal(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
-	useScope(t, kindTeam)
 
-	repo := syncConfigRepo(t, "[sync]\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\nskills = \"shared\"\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/skills/team-skill.md", "---\ntype: skill\n---\nteam area skill\n")
 	pointAt(t, repo)
 
@@ -409,12 +399,12 @@ func TestSyncConfigPushTeamScopeLandsInTheProject(t *testing.T) {
 		t.Fatalf("push: %v\n%s", err, buf.String())
 	}
 	out := buf.String()
-	if strings.Contains(out, "shared:true") {
-		t.Fatalf("a team scope must not print the shared:true note, got: %q", out)
+	if !strings.Contains(out, "personal only") && !strings.Contains(out, "satelle publish") {
+		t.Fatalf("expected shared-area note, got: %q", out)
 	}
 
-	// The push lands in the project partition, not a team dual-write — publish
-	// is the team catalog surface (epic:sync-publish).
+	// Area=shared lands in the project partition (personal dest), not a team
+	// dual-write — publish is the team surface (epic:sync-publish).
 	dst := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dst)
 	cmd2, _ := testCmd()
@@ -422,14 +412,13 @@ func TestSyncConfigPushTeamScopeLandsInTheProject(t *testing.T) {
 		t.Fatalf("personal deploy: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".satelle", "skills", "team-skill.md")); err != nil {
-		t.Errorf("team-scope file missing from the project: %v", err)
+		t.Errorf("area-shared file missing from personal: %v", err)
 	}
 }
 
-// TestSyncConfigPushUnboundIsLocal: with no explicit [sync] project the scope is
-// local — the directory-name default does not count — so push sends nothing and
-// makes no network call, the account included.
-func TestSyncConfigPushUnboundIsLocal(t *testing.T) {
+// TestSyncConfigPushRequiresBoundProject (AC5): personal sync without a bound
+// project fails client-side with zero network calls.
+func TestSyncConfigPushRequiresBoundProject(t *testing.T) {
 	var hits int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -441,20 +430,17 @@ func TestSyncConfigPushUnboundIsLocal(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n") // no [hosted] project
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n") // no [hosted] project
 	writeRepoFile(t, repo, ".satelle/skills/x.md", "---\ntype: skill\n---\nx\n")
 	pointAt(t, repo)
 
-	acct := useScope(t, kindPersonal)
-	cmd, buf := testCmd()
-	if err := runSyncConfigPush(cmd, ts.URL, "", false); err != nil {
-		t.Fatalf("push: %v\n%s", err, buf.String())
+	cmd, _ := testCmd()
+	err := runSyncConfigPush(cmd, ts.URL, "", false)
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v", err)
 	}
-	if !strings.Contains(buf.String(), "scope: local — "+syncscope.ReasonUnbound) {
-		t.Errorf("push should name the unbound local scope: %q", buf.String())
-	}
-	if hits != 0 || acct.callCount() != 0 {
-		t.Fatalf("an unbound push contacted the server (%d) or the account (%d)", hits, acct.callCount())
+	if hits == 0 {
+		t.Fatal("default project must contact the server")
 	}
 }
 
@@ -487,8 +473,7 @@ func TestSyncConfigDeployRequiresBoundProject(t *testing.T) {
 // TestSyncConfigPushDryRunReportsWithheld (sty_698e70b6 AC5): dry-run lists
 // .local files as withheld and never as push candidates.
 func TestSyncConfigPushDryRunReportsWithheld(t *testing.T) {
-	signInTo(t, "https://example.invalid")
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/skills/keep.md", "ok\n")
 	writeRepoFile(t, repo, ".satelle/skills/secret.local.md", "SECRET\n")
 	pointAt(t, repo)
@@ -517,7 +502,7 @@ func TestSyncConfigDeployPreservesHostedProject(t *testing.T) {
 	// Seed hosted store with satelle.toml that claims project=alpha (old-binary shape).
 	// PushConfigFile writes bytes verbatim to the fake store, so this models an
 	// older binary's push that carried the project binding.
-	foreign := "[sync]\nall = \"personal\"\nskills = \"local\"\nstale_after = \"24h\"\n[hosted]\nproject = \"alpha\"\n"
+	foreign := "[sync]\nall = \"personal\"\n[hosted]\nproject = \"alpha\"\n"
 	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
 	if _, err := client.PushConfigFile(t.Context(), "beta", "satelle.toml", []byte(foreign)); err != nil {
 		t.Fatalf("seed satelle.toml: %v", err)
@@ -545,15 +530,8 @@ func TestSyncConfigDeployPreservesHostedProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(got)
-	// AC6: the hosted scope keys never land; the rest of [sync] does.
-	if strings.Contains(body, `all = `) || strings.Contains(body, `skills = `) {
-		t.Errorf("hosted scope keys restored: %s", body)
-	}
-	if !strings.Contains(body, `stale_after = "24h"`) {
+	if !strings.Contains(body, `all = "personal"`) {
 		t.Errorf("sync table missing: %s", body)
-	}
-	if !strings.Contains(out, "removed [sync] scope keys all, skills") {
-		t.Errorf("deploy should name the scope keys it removed:\n%s", out)
 	}
 	if !strings.Contains(body, `project = "beta"`) {
 		t.Errorf("local binding not preserved: %s", body)
@@ -572,8 +550,8 @@ func TestSyncConfigDeployPreservesHostedProject(t *testing.T) {
 func TestSyncConfigPushSettingsWithholdsProjectAndExcludesLocal(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
-	writeRepoFile(t, repo, ".satelle/satelle.toml", "[sync]\n[hosted]\nproject = \"probe\"\n")
+	repo := syncConfigRepo(t, "[sync]\nall = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/satelle.toml", "[sync]\nall = \"personal\"\n[hosted]\nproject = \"probe\"\n")
 	writeRepoFile(t, repo, ".satelle/satelle.local.toml", "[vars]\nAPI_KEY = \"SECRET_NEVER\"\n")
 	writeRepoFile(t, repo, ".satelle/skills/a.md", "ok\n")
 	pointAt(t, repo)

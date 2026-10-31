@@ -24,7 +24,7 @@ func TestDocumentsPullUnwedgesOnUnwritableFile(t *testing.T) {
 	ts, f := newFakeSyncServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, repo)
 
 	// A destination inside a directory that cannot be written: no remove, no
@@ -88,7 +88,7 @@ func TestDocumentsPullRestoresReadOnlyGeneratedView(t *testing.T) {
 	ts, f := newFakeSyncServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, repo)
 
 	viewDir := filepath.Join(repo, ".satelle", "documents", "story-implementation-summary")
@@ -135,7 +135,7 @@ func TestDocumentsPullSkipsAlreadyIdenticalContent(t *testing.T) {
 	ts, f := newFakeSyncServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\n"+boundProjectToml)
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, repo)
 
 	same := []byte("# identical everywhere\n")

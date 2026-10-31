@@ -14,10 +14,10 @@ import (
 // (sty_40853d02) — any hold route the push dialled would fail the test.
 
 const (
-	appendOnlyToml = "[sync]\nhold_unpushed = false\n\n[hosted]\nproject = \"probe\"\n"
+	appendOnlyToml = "[sync]\nstories = \"personal\"\nledger = \"personal\"\nexecutions = \"personal\"\nhold_unpushed = false\n\n[hosted]\nproject = \"probe\"\n"
 	// holdBackToml leaves hold_unpushed at its default, so held-back
 	// classification runs over the batch.
-	holdBackToml = "[sync]\n\n[hosted]\nproject = \"probe\"\n"
+	holdBackToml = "[sync]\nstories = \"personal\"\nledger = \"personal\"\nexecutions = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
 )
 
 func createExecutionID(t *testing.T, title string) string {

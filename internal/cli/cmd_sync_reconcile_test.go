@@ -84,7 +84,6 @@ func reconcileFixture(t *testing.T) (a, b *snapMachine) {
 	}
 	a.pushConfig()
 	b.deploy()
-	b.resolvedScope(config.PersonalScope)
 
 	a.write("skills/x.md", "x from A\n")
 	a.write("skills/y.md", "y from A\n")
@@ -429,7 +428,7 @@ func TestReconcileTwoMachinesEndInStep(t *testing.T) {
 func TestReconcileSettingsAndAgentsKeepLocalValues(t *testing.T) {
 	ts, _ := newSnapServer(t)
 	seedCred(t, ts.URL)
-	const toml = "[sync]\n" + boundProjectToml
+	const toml = "[sync]\nagents = \"personal\"\nsettings = \"personal\"\n" + boundProjectToml
 	mk := func() *snapMachine {
 		m := &snapMachine{t: t, url: ts.URL, repo: syncConfigRepo(t, toml), state: filepath.Join(t.TempDir(), "document-sync-state.json")}
 		_ = os.Remove(filepath.Join(m.repo, ".satelle", "agents.toml"))

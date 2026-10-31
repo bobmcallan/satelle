@@ -21,7 +21,7 @@ func TestSyncConfigAgentsPushDeployRoundTripKeepsLocalValues(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := agentsPushRepo(t, "[sync]\n"+boundProjectToml, pushableAgents)
+	repo := agentsPushRepo(t, "[sync]\nagents = \"personal\"\n"+boundProjectToml, pushableAgents)
 	writeRepoFile(t, repo, ".satelle/workflows/agents.local.toml", localAgentsFixture)
 	agentsPath := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	localPath := filepath.Join(repo, ".satelle", "workflows", "agents.local.toml")
@@ -52,7 +52,7 @@ func TestSyncConfigAgentsPushDeployRoundTripKeepsLocalValues(t *testing.T) {
 
 	// Round trip 2: another checkout pushes a changed layer (model bumped, a
 	// binding added); deploying it here writes exactly those bytes.
-	other := agentsPushRepo(t, "[sync]\n"+boundProjectToml, pushableAgents)
+	other := agentsPushRepo(t, "[sync]\nagents = \"personal\"\n"+boundProjectToml, pushableAgents)
 	// A checkout that has never synced must pull before it can publish over the
 	// hosted snapshot (sty_fe5a8ed4); then it edits and pushes.
 	cmdPull, bufPull := testCmd()
@@ -81,7 +81,7 @@ func TestSyncConfigAgentsPushDeployRoundTripKeepsLocalValues(t *testing.T) {
 
 	// A legacy store body (an older push left machine-specific content in it) is
 	// refused, with the pointer, and nothing local is altered.
-	legacy := agentsPushRepo(t, "[sync]\n[hosted]\nproject = \"legacy\"\n", pushableAgents)
+	legacy := agentsPushRepo(t, "[sync]\nagents = \"personal\"\n[hosted]\nproject = \"legacy\"\n", pushableAgents)
 	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
 	if _, err := client.PushConfigFile(context.Background(), "legacy", "workflows/agents.toml", []byte(secretAgentsToml)); err != nil {
 		t.Fatalf("seed legacy store body: %v", err)
