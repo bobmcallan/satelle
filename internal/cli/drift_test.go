@@ -363,10 +363,12 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		{"0.0.678", true, "stamped at the pattern syntax, but predates the location-hold removal at 0.0.761", false},
 		{"0.0.759", true, "predates the location-hold removal", false},
 		{"0.0.760", true, "the release just before the location-hold removal — released without it, so it must be refused until init", false},
-		{"0.0.761", false, "stamped at the location-hold removal, but predates the manual project tier at 0.0.793", true},
-		{"0.0.792", false, "the release just before the project tier", true},
-		{"0.0.793", false, "stamped AT the newest Breaking release", false},
-		{"0.0.794", false, "past it", false},
+		{"0.0.761", true, "stamped at the location-hold removal, but predates the [sync] scope-key removal at 0.0.816", false},
+		{"0.0.792", true, "the release just before the manual project tier, still behind 0.0.816", false},
+		{"0.0.793", true, "stamped at the manual project tier, but predates the [sync] scope-key removal at 0.0.816", false},
+		{"0.0.815", true, "the release just before the [sync] scope-key removal", false},
+		{"0.0.816", false, "stamped AT the newest Breaking release", false},
+		{"0.0.817", false, "past it", false},
 	}
 	for _, c := range cases {
 		entries, err := verb.ChangelogRange(c.deployed, future)
